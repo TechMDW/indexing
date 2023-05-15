@@ -14,7 +14,9 @@ type FileInfo struct {
 	ModTime     time.Time   `json:"modTime"`
 	Permissions os.FileMode `json:"permissions"`
 	Hash        Hash        `json:"hash"`
-	Score       int         `json:"score"`
+	Score       int         `json:"score,omitempty"`
+	FileScore   FileScore   `json:"fileScore,omitempty"`
+	DirScore    DirScore    `json:"dirScore,omitempty"`
 }
 
 type Hash struct {

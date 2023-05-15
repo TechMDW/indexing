@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -49,9 +50,37 @@ func indexFile(dir string, file fs.DirEntry) error {
 
 	for _, f := range fileIndex {
 		if f.Path == filePath {
+			if f.IsDir {
+				fileStats, err := file.Info()
+
+				if err != nil {
+					if os.IsNotExist(err) {
+						err := removeIndexFile(filePath)
+
+						if err != nil {
+							return err
+						}
+					}
+					return err
+				}
+
+				if fileStats.ModTime().After(f.ModTime) {
+					history <- fmt.Sprintf("File %s has been modified", filePath)
+
+					fileIndexMutex.Lock()
+					defer fileIndexMutex.Unlock()
+					f.ModTime = fileStats.ModTime()
+					f.Permissions = fileStats.Mode().Perm()
+					f.Size = fileStats.Size()
+
+					newFileIndex++
+				}
+
+				return nil
+			}
+
 			if checksum(filePath, f.Hash.MD5) {
 				history <- fmt.Sprintf("File %s already indexed", filePath)
-				fmt.Println("File", filePath, "already indexed")
 				return nil
 			}
 		}
@@ -86,10 +115,10 @@ func indexFile(dir string, file fs.DirEntry) error {
 	}
 
 	// Full path to the file
-	startTime := time.Now()
+	// startTime := time.Now()
 	hash, err := hashFile(filePath)
-	fmt.Println("Hashing file", filePath, "took", time.Since(startTime))
-	history <- fmt.Sprintf("Hashing file %s took %s", filePath, time.Since(startTime))
+	// fmt.Println("Hashing file", filePath, "took", time.Since(startTime))
+	// history <- fmt.Sprintf("Hashing file %s took %s", filePath, time.Since(startTime))
 
 	if err != nil {
 		log.Printf("Error hashing file %s: %s", filePath, err)
@@ -113,12 +142,13 @@ func indexFile(dir string, file fs.DirEntry) error {
 	return nil
 }
 
-func autoStore(dir string) {
-	man := time.NewTicker(1 * time.Minute)
+func autoIndexHandler(dir string) {
+	forcedScan := time.NewTicker(1 * time.Minute)
 	scan := time.NewTicker(1 * time.Second)
+	del := time.NewTicker(30 * time.Second)
 	for {
 		select {
-		case <-man.C:
+		case <-forcedScan.C:
 			go func() {
 				if newFileIndex <= 0 {
 					return
@@ -150,6 +180,11 @@ func autoStore(dir string) {
 				}
 
 				newFileIndex = 0
+			}()
+
+		case <-del.C:
+			go func() {
+				checkForRemovedFiles(fileIndex)
 			}()
 		}
 	}
@@ -192,6 +227,90 @@ func loadFileIndex(dir string) error {
 
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func searchIndex(query string) []FileInfo {
+	type scoredFile struct {
+		file      FileInfo
+		score     int
+		fileScore FileScore
+		dirScore  DirScore
+	}
+	var scoredFiles []scoredFile
+	seen := make(map[string]bool)
+
+	for _, file := range fileIndex {
+		if seen[file.Path] {
+			continue
+		}
+
+		var score int
+		var fileScore FileScore
+		var dirScore DirScore
+		if file.IsDir {
+			score, dirScore = scoreDir(file, query)
+		} else if !file.IsDir {
+			score, fileScore = scoreFile(file, query)
+		}
+
+		if score > 0 {
+			scoredFiles = append(scoredFiles, scoredFile{file, score, fileScore, dirScore})
+			seen[file.Path] = true
+		}
+	}
+
+	sort.Slice(scoredFiles, func(i, j int) bool {
+		return scoredFiles[i].score > scoredFiles[j].score
+	})
+
+	if len(scoredFiles) > 500 {
+		scoredFiles = scoredFiles[:500]
+	}
+
+	var results []FileInfo
+	for _, scoredFile := range scoredFiles {
+		scoredFile.file.Score = scoredFile.score
+		scoredFile.file.FileScore = scoredFile.fileScore
+		scoredFile.file.DirScore = scoredFile.dirScore
+		results = append(results, scoredFile.file)
+	}
+
+	return results
+}
+
+// Takes in a copy of the fileIndex and checks if the files still exist
+//
+// If they don't exist, it calls removeIndexFile to remove the file from the "live index"
+func checkForRemovedFiles(files []FileInfo) {
+	for _, file := range files {
+		if _, err := os.Stat(file.Path); err != nil {
+			if os.IsNotExist(err) {
+				err := removeIndexFile(file.Path)
+
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+
+				history <- fmt.Sprintf("File %s has been removed", file.Path)
+			}
+		}
+	}
+
+	return
+}
+
+func removeIndexFile(path string) error {
+	fileIndexMutex.Lock()
+	defer fileIndexMutex.Unlock()
+	for i, f := range fileIndex {
+		if f.Path == path {
+			fileIndex = append(fileIndex[:i], fileIndex[i+1:]...)
+			break
+		}
 	}
 
 	return nil

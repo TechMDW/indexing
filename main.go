@@ -13,7 +13,6 @@ import (
 	"os"
 	"regexp"
 	"runtime"
-	"sort"
 	"strings"
 
 	"github.com/asticode/go-astikit"
@@ -62,16 +61,22 @@ func main() {
 	err = loadFileIndex(rootDir)
 	if err != nil {
 		log.Println(err)
+		return
 	}
 
 	// Start the auto store goroutine
-	go autoStore(rootDir)
+	go autoIndexHandler(rootDir)
+
+	// Check for removed files
+	checkForRemovedFiles(fileIndex)
 
 	// Index the current directory
 	err = indexDirectory(rootDir)
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	fmt.Println("Indexing complete")
 
 	err = storeIndex(rootDir)
 
@@ -111,37 +116,52 @@ func listenForInput(w *astilectron.Window) {
 	})
 }
 
-func scoreFile(file FileInfo, query string) int {
-	score := 0
+type FileScore struct {
+	Contains   int
+	Exact      int
+	Start      int
+	Word       int
+	Length     int
+	Extension  int
+	Hash       int
+	Permission int
+}
+
+func scoreFile(file FileInfo, query string) (int, FileScore) {
+	var score FileScore
 
 	lQuery := strings.ToLower(query)
 	lName := strings.ToLower(file.Name)
-	lPath := strings.ToLower(file.Path)
 	lPermissions := strings.ToLower(file.Permissions.String())
 
-	if !file.IsDir && strings.Contains(lName, lQuery) {
-		score += 3
+	if strings.Contains(lName, lQuery) {
+		score.Contains += 2
 
 		// If the query matches the permissions exactly (case sensitive)
 		if strings.Contains(file.Name, query) {
-			score += 3
+			score.Exact += 2
 		}
 
 		// If the query is at the start of the file name
 		if strings.Index(file.Name, query) == 0 {
-			score += 3
+			score.Start += 2
+		}
+
+		// If the query is at the start of the file name
+		if strings.Index(lName, lQuery) == 0 {
+			score.Start += 2
 		}
 
 		// If the query is a word in the file name
 		for _, word := range strings.Split(file.Name, " ") {
 			if word == query {
-				score += 4
+				score.Word += 3
 			}
 		}
 
 		// Add a score boost proportional to the length of the match
 		matchRatio := float64(len(query)) / float64(len(file.Name))
-		score += int(matchRatio * 3)
+		score.Length += int(matchRatio * 10)
 
 		// If the query is a file extension
 		if strings.Index(query, ".") == 0 {
@@ -149,77 +169,32 @@ func scoreFile(file FileInfo, query string) int {
 			ext := spl[len(spl)-1]
 
 			if strings.HasSuffix(file.Name, query) {
-				score += 10
+				score.Extension += 5
 			} else if strings.Index(fmt.Sprintf(".%s", ext), query) == 0 {
-				score += 5
+				score.Extension += 3
 			} else if strings.Index(fmt.Sprintf(".%s", strings.ToLower(ext)), lQuery) == 0 {
-				score += 3
-			}
-		}
-	}
-
-	if file.IsDir && strings.Contains(lPath, lQuery) {
-		score += 2
-
-		// If the query matches the path (case sensitive)
-		if strings.Contains(file.Path, query) {
-			score += 2
-		}
-
-		// If the query is at the start of the file name
-		if strings.Index(file.Path, query) == 0 {
-			score += 3
-		}
-
-		re := regexp.MustCompile(`[\/\\](\w+)([\/\\]|$)`)
-		matches := re.FindAllStringSubmatch(file.Path, -1)
-
-		for _, match := range matches {
-			if strings.Contains(match[1], query) {
-				score += 3
-			}
-		}
-
-		// Add a score boost proportional to how far down the path the match is
-		if (strings.Index(query, "/") == 0 || strings.Index(query, "\\") == 0) && file.IsDir {
-			paths := strings.Split(file.Path, "/")
-			queryPaths := strings.Split(query, "/")
-
-			fmt.Println(paths, queryPaths)
-			for i, path := range paths {
-				// Check if we have enough parts in the query to compare
-				if len(queryPaths) <= i {
-					break
-				}
-
-				if path == queryPaths[i] {
-					score += (i + 1) * 10
-				}
-
-				if strings.Contains(path, queryPaths[i]) {
-					score += (i + 1) * 6
-				}
+				score.Extension += 2
 			}
 		}
 	}
 
 	if strings.Contains(lPermissions, lQuery) {
-		score += 2
+		score.Permission += 2
 
 		// If the query matches the permissions exactly (case sensitive)
 		if strings.Contains(file.Permissions.String(), query) {
-			score += 2
+			score.Permission += 2
 		}
 
 		// If the query is at the start of the file name
 		if strings.Index(file.Permissions.String(), query) == 0 {
-			score += 2
+			score.Permission += 2
 		}
 
 		// If the query is a word in the file name
 		for _, word := range strings.Split(file.Permissions.String(), " ") {
 			if word == query {
-				score += 3
+				score.Permission += 3
 			}
 		}
 	}
@@ -233,43 +208,94 @@ func scoreFile(file FileInfo, query string) int {
 		strings.Contains(file.Hash.SHA3.SHA512, query) ||
 		strings.Contains(file.Hash.CRC32, query) ||
 		strings.Contains(file.Hash.CRC64, query)) {
-		score += hashScore
+		score.Hash += hashScore
 	}
 
-	return score
+	return score.Contains + score.Exact + score.Start + score.Word + score.Length + score.Extension + score.Hash, score
 }
 
-func searchIndex(query string) []FileInfo {
-	type scoredFile struct {
-		file  FileInfo
-		score int
-	}
-	var scoredFiles []scoredFile
-	seen := make(map[string]bool)
+type DirScore struct {
+	Contains    int
+	Exact       int
+	Start       int
+	Word        int
+	Length      int
+	Permissions int
+}
 
-	for _, file := range fileIndex {
-		if seen[file.Path] {
-			continue
+func scoreDir(dir FileInfo, query string) (int, DirScore) {
+	var score DirScore
+
+	lQuery := strings.ToLower(query)
+	lPath := strings.ToLower(dir.Path)
+	lPermissions := strings.ToLower(dir.Permissions.String())
+
+	if strings.Contains(lPath, lQuery) {
+		score.Contains += 2
+
+		// If the query matches the path (case sensitive)
+		if strings.Contains(dir.Path, query) {
+			score.Exact += 2
 		}
 
-		score := scoreFile(file, query)
-		if score > 0 {
-			scoredFiles = append(scoredFiles, scoredFile{file, score})
-			seen[file.Path] = true
+		// If the query is at the start of the file name
+		if strings.Index(dir.Path, query) == 0 {
+			score.Start += 2
+		}
+
+		re := regexp.MustCompile(`[\/\\](\w+)([\/\\]|$)`)
+		matches := re.FindAllStringSubmatch(dir.Path, -1)
+
+		for _, match := range matches {
+			if strings.Contains(match[1], query) {
+				score.Word += 3
+			}
+		}
+
+		// Add a score boost proportional to how far down the path the match is
+		if strings.Index(query, "/") == 0 || strings.Index(query, "\\") == 0 {
+			paths := strings.Split(dir.Path, "/")
+			queryPaths := strings.Split(query, "/")
+
+			for i, path := range paths {
+				// Check if we have enough parts in the query to compare
+				if len(queryPaths) <= i {
+					break
+				}
+
+				if path == queryPaths[i] {
+					score.Length += 2
+				}
+
+				if strings.Contains(path, queryPaths[i]) {
+					score.Length += 1
+				}
+			}
 		}
 	}
 
-	sort.Slice(scoredFiles, func(i, j int) bool {
-		return scoredFiles[i].score > scoredFiles[j].score
-	})
+	if strings.Contains(lPermissions, lQuery) {
+		score.Contains += 2
 
-	var results []FileInfo
-	for _, scoredFile := range scoredFiles {
-		scoredFile.file.Score = scoredFile.score
-		results = append(results, scoredFile.file)
+		// If the query matches the permissions exactly (case sensitive)
+		if strings.Contains(dir.Permissions.String(), query) {
+			score.Exact += 2
+		}
+
+		// If the query is at the start of the file name
+		if strings.Index(dir.Permissions.String(), query) == 0 {
+			score.Start += 2
+		}
+
+		// If the query is a word in the file name
+		for _, word := range strings.Split(dir.Permissions.String(), " ") {
+			if word == query {
+				score.Word += 3
+			}
+		}
 	}
 
-	return results
+	return score.Contains + score.Exact + score.Start + score.Word + score.Length, score
 }
 
 func hashFile(filePath string) (Hash, error) {
@@ -279,6 +305,15 @@ func hashFile(filePath string) (Hash, error) {
 	}
 
 	defer file.Close()
+
+	fileStats, err := file.Stat()
+	if err != nil {
+		return Hash{}, err
+	}
+
+	if fileStats.Size() > 100<<20 {
+		return Hash{}, nil
+	}
 
 	// MD5
 	hasherMD5 := md5.New()
@@ -323,7 +358,9 @@ func hashFile(filePath string) (Hash, error) {
 
 func checksum(filePath string, hash string) bool {
 	file, err := os.Open(filePath)
+
 	if err != nil {
+		fmt.Println(err)
 		return false
 	}
 
@@ -333,6 +370,7 @@ func checksum(filePath string, hash string) bool {
 
 	_, err = io.Copy(hasher, file)
 	if err != nil {
+		fmt.Println(err)
 		return false
 	}
 
