@@ -19,16 +19,6 @@ type FileInfo struct {
 	DirScore    DirScore    `json:"dirScore,omitempty"`
 }
 
-type Hash struct {
-	MD5    string `json:"MD5"`
-	SHA1   string `json:"SHA1"`
-	SHA256 string `json:"SHA256"`
-	SHA512 string `json:"SHA512"`
-	SHA3   SHA3   `json:"SHA3"`
-	CRC32  string `json:"CRC32"`
-	CRC64  string `json:"CRC64"`
-}
-
 type SHA3 struct {
 	SHA256 string `json:"SHA256"`
 	SHA512 string `json:"SHA512"`

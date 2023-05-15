@@ -64,6 +64,10 @@ func main() {
 		return
 	}
 
+	checkForNewFiles(rootDir)
+
+	return
+
 	// Start the auto store goroutine
 	go autoIndexHandler(rootDir)
 

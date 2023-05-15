@@ -22,7 +22,7 @@ document.addEventListener("astilectron-ready", function () {
       resultTitle.innerText = result.name;
 
       const resultPath = document.createElement("p");
-      resultPath.innerText = result.path;
+      resultPath.innerText = result.fullPath;
 
       resultDiv.appendChild(resultTitle);
       resultDiv.appendChild(resultPath);

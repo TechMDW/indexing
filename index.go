@@ -315,3 +315,43 @@ func removeIndexFile(path string) error {
 
 	return nil
 }
+
+// Loop through the files in the directory and subdirectories and check if they are in the index
+func checkForNewFiles(dir string) {
+	startTime := time.Now()
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	for _, file := range files {
+		filePath := fmt.Sprintf("%s/%s", dir, file.Name())
+
+		if file.IsDir() {
+			checkForNewFiles(fmt.Sprintf("%s/%s", dir, file.Name()))
+		}
+
+		// Check if the file is in the index
+		var found bool
+		for _, f := range fileIndex {
+			if f.Path == filePath {
+				found = true
+				break
+			}
+		}
+
+		if found {
+			continue
+		}
+
+		err := indexFile(dir, file)
+
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	}
+
+	fmt.Println("Checking for new files took", time.Since(startTime))
+}
