@@ -276,6 +276,7 @@ func (i *Index) FindNewFiles(path string) {
 				return
 			}
 
+			log.Println("Not allowed to read file/folder, indexing without permissions", path)
 			file, err := IndexFileWithoutPermissions(path, stats)
 
 			if err != nil {
