@@ -130,6 +130,7 @@ func IndexDirectory(path string, index *Index) error {
 	return nil
 }
 
+// Singleton function to get the index instance
 func GetIndexInstance() (*Index, error) {
 	once.Do(func() {
 		idx = &Index{
@@ -155,19 +156,23 @@ func GetIndexInstance() (*Index, error) {
 
 			split := strings.Split(rootPath, "/")
 			rootPath = fmt.Sprintf("/%s", split[1])
+		case "darwin":
+			if rootPath == "/" {
+				break
+			}
+
+			split := strings.Split(rootPath, "/")
+			rootPath = fmt.Sprintf("/%s", split[1])
 		default:
 		}
 
 		idx.rootPath = rootPath
-		fmt.Println("Loading index")
+
 		err = idx.LoadFileIndex(rootPath)
-		fmt.Println("Index loaded")
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				go func() {
-					fmt.Println("Indexing started")
 					err := IndexDirectory(rootPath, idx)
-					fmt.Println("Indexing finished")
 					if err != nil {
 						log.Println(err)
 					}
@@ -271,6 +276,7 @@ func (i *Index) FindNewFiles(path string) {
 				return
 			}
 
+			log.Println("Not allowed to read file/folder, indexing without permissions", path)
 			file, err := IndexFileWithoutPermissions(path, stats)
 
 			if err != nil {
