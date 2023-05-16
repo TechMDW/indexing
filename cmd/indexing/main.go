@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
 	"indexing/internal/indexing"
 	"log"
+	"os"
 
 	"github.com/asticode/go-astikit"
 	"github.com/asticode/go-astilectron"
+
+	hook "github.com/robotn/gohook"
 )
 
 func main() {
@@ -29,13 +34,38 @@ func main() {
 	}
 
 	a.Wait()
+
+	go func() {
+		// get any keypress
+		bufio.NewReader(os.Stdin).ReadByte()
+		fmt.Println("Exiting...")
+	}()
+}
+
+func startHook(w *astilectron.Window) {
+	hook.Register(hook.KeyDown, []string{"ctrl", "space"}, func(event hook.Event) {
+		if w.IsShown() {
+			w.Hide()
+		} else {
+			w.Show()
+			go w.Focus()
+		}
+
+		startHook(w)
+		hook.End()
+	})
+
+	start := hook.Start()
+	<-hook.Process(start)
 }
 
 func startWindow(a *astilectron.Astilectron) {
 	w, err := a.NewWindow("./page/home.html", &astilectron.WindowOptions{
-		Center: astikit.BoolPtr(true),
-		Height: astikit.IntPtr(600),
-		Width:  astikit.IntPtr(1000),
+		Center:      astikit.BoolPtr(true),
+		Height:      astikit.IntPtr(600),
+		Width:       astikit.IntPtr(1000),
+		Frame:       astikit.BoolPtr(false),
+		Transparent: astikit.BoolPtr(true),
 	})
 
 	if err != nil {
@@ -45,6 +75,7 @@ func startWindow(a *astilectron.Astilectron) {
 	w.Create()
 	w.OpenDevTools()
 	listenForInput(w)
+	startHook(w)
 }
 
 func listenForInput(w *astilectron.Window) {
