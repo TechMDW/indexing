@@ -62,8 +62,8 @@ func startHook(w *astilectron.Window) {
 func startWindow(a *astilectron.Astilectron) {
 	w, err := a.NewWindow("./page/home.html", &astilectron.WindowOptions{
 		Center:      astikit.BoolPtr(true),
-		Height:      astikit.IntPtr(600),
-		Width:       astikit.IntPtr(1000),
+		MinHeight:   astikit.IntPtr(80),
+		Width:       astikit.IntPtr(720),
 		Frame:       astikit.BoolPtr(false),
 		Transparent: astikit.BoolPtr(true),
 	})
@@ -73,7 +73,7 @@ func startWindow(a *astilectron.Astilectron) {
 	}
 
 	w.Create()
-	w.OpenDevTools()
+	//w.OpenDevTools()
 	listenForInput(w)
 	startHook(w)
 }
