@@ -10,7 +10,8 @@ require (
 
 require github.com/vcaesar/keycode v0.10.0 // indirect
 
+require github.com/robotn/gohook v0.40.0
 require (
-	github.com/robotn/gohook v0.40.0
+	github.com/pierrec/lz4/v4 v4.1.17 // indirect
 	golang.org/x/sys v0.8.0 // indirect
 )
