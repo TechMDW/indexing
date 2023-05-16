@@ -8,4 +8,7 @@ require (
 	golang.org/x/crypto v0.9.0
 )
 
-require golang.org/x/sys v0.8.0 // indirect
+require (
+	github.com/pierrec/lz4/v4 v4.1.17 // indirect
+	golang.org/x/sys v0.8.0 // indirect
+)

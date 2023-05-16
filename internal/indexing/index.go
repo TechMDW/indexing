@@ -2,6 +2,7 @@ package indexing
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"indexing/internal/hash"
 	"io"
@@ -14,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pierrec/lz4/v4"
 )
 
 // singelton main struct for the indexing package
@@ -24,7 +27,6 @@ var (
 )
 
 var lim = make(chan struct{}, MaxGoRoutines)
-var wg = sync.WaitGroup{}
 
 func IndexFile(path string, file fs.DirEntry) (*File, error) {
 	info, err := file.Info()
@@ -33,20 +35,24 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 	}
 
 	var hashes hash.Hash
+	var Error error = nil
 	if !file.IsDir() {
 		f, err := os.Open(fmt.Sprintf("%s/%s", path, file.Name()))
 		if err != nil {
-			return nil, err
+			Error = err
 		}
-		defer f.Close()
 
-		hashes, err = hash.HashFile(f)
-		if err != nil {
-			return nil, err
+		if Error == nil {
+			defer f.Close()
+
+			hashes, err = hash.HashFile(f)
+			if err != nil {
+				Error = err
+			}
 		}
 	}
 
-	return &File{
+	fileInfo := File{
 		Name:      file.Name(),
 		Extension: filepath.Ext(file.Name()),
 		Path:      path,
@@ -59,6 +65,34 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 			Permission: info.Mode(),
 		},
 		Hash: hashes,
+	}
+
+	if Error != nil {
+		fileInfo.Error = Error.Error()
+	}
+
+	return &fileInfo, nil
+}
+
+func IndexFileWithoutPermissions(path string, info fs.FileInfo) (*File, error) {
+	var fullPath string
+
+	if info.IsDir() {
+		fullPath = path
+	} else {
+		fullPath = fmt.Sprintf("%s/%s", path, info.Name())
+	}
+
+	return &File{
+		Name:      info.Name(),
+		Extension: filepath.Ext(info.Name()),
+		Path:      path,
+		FullPath:  fullPath,
+		Size:      info.Size(),
+		IsHidden:  info.Name()[0] == '.',
+		IsDir:     info.IsDir(),
+		ModTime:   info.ModTime(),
+		Error:     ErrNotAllowedToRead.Error(),
 	}, nil
 }
 
@@ -67,6 +101,8 @@ func IndexDirectory(path string, index *Index) error {
 	if err != nil {
 		return err
 	}
+
+	var wg = sync.WaitGroup{}
 
 	for _, file := range files {
 		lim <- struct{}{} // acquire a slot
@@ -123,27 +159,23 @@ func GetIndexInstance() (*Index, error) {
 		}
 
 		idx.rootPath = rootPath
-
+		fmt.Println("Loading index")
 		err = idx.LoadFileIndex(rootPath)
-
+		fmt.Println("Index loaded")
 		if err != nil {
-			// If the index file doesn't exist or EOF, create a new one
-			if err == os.ErrNotExist || err == io.EOF {
-				err := IndexDirectory(rootPath, idx)
-				if err != nil {
-					ErrIdx = err
-					return
-				}
-
-				err = idx.StoreFileIndex(rootPath)
-				if err != nil {
-					ErrIdx = err
-					return
-				}
+			if errors.Is(err, fs.ErrNotExist) {
+				go func() {
+					fmt.Println("Indexing started")
+					err := IndexDirectory(rootPath, idx)
+					fmt.Println("Indexing finished")
+					if err != nil {
+						log.Println(err)
+					}
+				}()
+			} else {
+				ErrIdx = err
+				return
 			}
-
-			ErrIdx = err
-			return
 		}
 
 		go idx.handler()
@@ -232,6 +264,29 @@ func (i *Index) Search(q string) []File {
 func (i *Index) FindNewFiles(path string) {
 	files, err := os.ReadDir(path)
 	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			stats, err := os.Stat(path)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			file, err := IndexFileWithoutPermissions(path, stats)
+
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			err = i.StoreIndex(path, *file)
+
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			return
+		}
 		log.Println(err)
 		return
 	}
@@ -306,6 +361,8 @@ func (i *Index) StoreIndex(fullPath string, file File) error {
 
 	i.FilesArrayLock.RUnlock()
 
+	i.newFilesSinceStore++
+
 	if found {
 		i.FilesArrayLock.Lock()
 		i.FilesArray[index] = file
@@ -377,15 +434,24 @@ func (i *Index) LoadFileIndex(path string) error {
 
 	path = path + IndexFileName
 
-	file, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0644)
+	file, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&i.FilesMap); err != nil {
+	lz4Reader := lz4.NewReader(file)
+
+	decoder := json.NewDecoder(lz4Reader)
+	err = decoder.Decode(&i.FilesMap)
+	if err != nil && err != io.EOF {
 		return err
+	}
+
+	if err == io.EOF {
+		i.FilesMap = make(map[string]File)
+		i.FilesArray = []File{}
+		return nil
 	}
 
 	i.FilesArray = nil
@@ -408,8 +474,14 @@ func (i *Index) StoreFileIndex(path string) error {
 	}
 	defer file.Close()
 
-	encoder := json.NewEncoder(file)
+	lz4Writer := lz4.NewWriter(file)
+
+	encoder := json.NewEncoder(lz4Writer)
 	if err := encoder.Encode(i.FilesMap); err != nil {
+		return err
+	}
+
+	if err := lz4Writer.Close(); err != nil {
 		return err
 	}
 

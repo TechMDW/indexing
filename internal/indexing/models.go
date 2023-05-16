@@ -22,19 +22,20 @@ type Index struct {
 }
 
 type File struct {
-	Name              string            `json:"name"`
-	Extension         string            `json:"ext"`
-	Path              string            `json:"path"`
-	FullPath          string            `json:"fullPath"`
-	Size              int64             `json:"size"`
-	IsHidden          bool              `json:"isHidden"`
-	IsDir             bool              `json:"isDir"`
-	CreatedTime       time.Time         `json:"created"`
-	ModTime           time.Time         `json:"modTime"`
-	AccessedTime      time.Time         `json:"accessed"`
-	Permissions       Permissions       `json:"permissions"`
-	Hash              hash.Hash         `json:"hash"`
-	internal_metadata internal_metadata `json:"metadata,omitempty"`
+	Name              string      `json:"name"`
+	Extension         string      `json:"ext"`
+	Path              string      `json:"path"`
+	FullPath          string      `json:"fullPath"`
+	Size              int64       `json:"size"`
+	IsHidden          bool        `json:"isHidden"`
+	IsDir             bool        `json:"isDir"`
+	CreatedTime       time.Time   `json:"created"`
+	ModTime           time.Time   `json:"modTime"`
+	AccessedTime      time.Time   `json:"accessed"`
+	Permissions       Permissions `json:"permissions"`
+	Hash              hash.Hash   `json:"hash"`
+	Error             string      `json:"error,omitempty"`
+	internal_metadata internal_metadata
 }
 
 type internal_metadata struct {
