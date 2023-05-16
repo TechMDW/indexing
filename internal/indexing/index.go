@@ -156,6 +156,13 @@ func GetIndexInstance() (*Index, error) {
 
 			split := strings.Split(rootPath, "/")
 			rootPath = fmt.Sprintf("/%s", split[1])
+		case "darwin":
+			if rootPath == "/" {
+				break
+			}
+
+			split := strings.Split(rootPath, "/")
+			rootPath = fmt.Sprintf("/%s", split[1])
 		default:
 		}
 
