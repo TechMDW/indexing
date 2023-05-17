@@ -18,7 +18,7 @@ Indexing is a simple search tool that allows users to search for specific conten
 #### Solution 1 (graphical)
 
 **IMPORTANT when using this you will need a c++ compiler for the keybinds
-note this subject to change**
+note this is subject to change**
 
 1. Clone the repository: `git clone https://github.com/TechMDW/indexing.git`
 2. Navigate to the project directory: `cd indexing`
@@ -33,8 +33,8 @@ note this subject to change**
 
 ## TODO
 
-- [ ] Graceful shutdown
-- [ ] Index all drives/files
+- [x] Graceful shutdown
+- [x] Index all drives/files
 - [ ] Better error handling on access denied
 - [ ] Improve search algorithm
 - [ ] USB version for indexing single drive
