@@ -174,6 +174,8 @@ func GetIndexInstance() (*Index, error) {
 		// Get windows or linux
 		oss := runtime.GOOS
 
+		fmt.Println("Operating system:", oss)
+
 		switch oss {
 		case "windows":
 			// Loop through all possible drives on Windows
@@ -181,6 +183,7 @@ func GetIndexInstance() (*Index, error) {
 				drivePath := fmt.Sprintf("%s:/", string(driveLetter))
 				if _, err := os.Stat(drivePath); !os.IsNotExist(err) {
 					log.Printf("Found drive %s\n", drivePath)
+
 					idx.WindowsDrivesLock.Lock()
 					*idx.WindowsDrives = append(*idx.WindowsDrives, drivePath)
 					idx.WindowsDrivesLock.Unlock()
@@ -214,40 +217,40 @@ func GetIndexInstance() (*Index, error) {
 
 // TODO: Don't like this function...
 func (i *Index) handler() {
-	// var autoStoreFunc func()
-	// autoStoreFunc = func() {
-	// 	if i.newFilesSinceStore != 0 {
-	// 		i.StoreFileIndex()
-	// 	}
-	// 	time.AfterFunc(1*time.Minute, autoStoreFunc)
-	// }
-	// go autoStoreFunc()
+	var autoStoreFunc func()
+	autoStoreFunc = func() {
+		if i.newFilesSinceStore != 0 {
+			i.StoreFileIndex()
+		}
+		time.AfterFunc(1*time.Minute, autoStoreFunc)
+	}
+	go autoStoreFunc()
 
-	// var storeFunc func()
-	// storeFunc = func() {
-	// 	if i.newFilesSinceStore >= 50 {
-	// 		i.StoreFileIndex()
-	// 	} else if time.Since(i.lastStore) >= 1*time.Minute && i.newFilesSinceStore != 0 {
-	// 		i.StoreFileIndex()
-	// 	}
-	// 	time.AfterFunc(5*time.Second, storeFunc)
-	// }
-	// go storeFunc()
+	var storeFunc func()
+	storeFunc = func() {
+		if i.newFilesSinceStore >= 50 {
+			i.StoreFileIndex()
+		} else if time.Since(i.lastStore) >= 1*time.Minute && i.newFilesSinceStore != 0 {
+			i.StoreFileIndex()
+		}
+		time.AfterFunc(5*time.Second, storeFunc)
+	}
+	go storeFunc()
 
-	// var newFilesFunc func()
-	// newFilesFunc = func() {
-	// 	if runtime.GOOS == "windows" {
-	// 		for _, drive := range *idx.WindowsDrives {
-	// 			idx.FindNewFiles(drive)
-	// 		}
-	// 	} else if runtime.GOOS == "linux" {
-	// 		idx.FindNewFiles("/")
-	// 	} else if runtime.GOOS == "darwin" {
-	// 		idx.FindNewFiles("/")
-	// 	}
+	var newFilesFunc func()
+	newFilesFunc = func() {
+		if runtime.GOOS == "windows" {
+			for _, drive := range *idx.WindowsDrives {
+				idx.FindNewFiles(drive)
+			}
+		} else if runtime.GOOS == "linux" {
+			idx.FindNewFiles("/")
+		} else if runtime.GOOS == "darwin" {
+			idx.FindNewFiles("/")
+		}
 
-	// 	time.AfterFunc(30*time.Second, newFilesFunc)
-	// }
+		time.AfterFunc(30*time.Second, newFilesFunc)
+	}
 
 	var removedFilesFunc func()
 	removedFilesFunc = func() {
@@ -261,14 +264,20 @@ func (i *Index) handler() {
 			for _, driveLetter := range WIN_PossibleDriveLetters {
 				drivePath := fmt.Sprintf("%s:/", string(driveLetter))
 				if _, err := os.Stat(drivePath); !os.IsNotExist(err) {
+					var found bool
 					for _, drive := range *idx.WindowsDrives {
 						if drive == drivePath {
-							continue
+							found = true
+							break
 						}
+					}
 
+					if !found {
+						log.Println("Found new drive", drivePath)
 						idx.WindowsDrivesLock.Lock()
 						*idx.WindowsDrives = append(*idx.WindowsDrives, drivePath)
 						idx.WindowsDrivesLock.Unlock()
+						continue
 					}
 				}
 			}
@@ -284,7 +293,7 @@ func (i *Index) handler() {
 	for {
 		select {
 		case <-delayNewFiles.C:
-			// go newFilesFunc()
+			go newFilesFunc()
 		case <-delayRemovedFiles.C:
 			go removedFilesFunc()
 		case <-delayCheckForNewDrives.C:
@@ -389,6 +398,21 @@ func (i *Index) FindNewFiles(path string) {
 			currFile, err := i.GetIndex(filePath)
 
 			if err != nil {
+				if errors.Is(err, ErrFileNotFound) {
+					indexedFile, err := IndexFile(path, file)
+					if err != nil {
+						log.Println(err)
+						return
+					}
+
+					err = i.StoreIndex(filePath, *indexedFile)
+					if err != nil {
+						log.Println(err)
+						return
+					}
+
+					return
+				}
 				log.Println(err)
 				return
 			}
