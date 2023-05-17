@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
 	"log"
-	"os"
 
 	"github.com/TechMDW/indexing/internal/indexing"
 
@@ -33,12 +30,6 @@ func main() {
 	}
 
 	a.Wait()
-
-	go func() {
-		// get any keypress
-		bufio.NewReader(os.Stdin).ReadByte()
-		fmt.Println("Exiting...")
-	}()
 }
 
 func startWindow(a *astilectron.Astilectron) {

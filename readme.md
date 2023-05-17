@@ -31,6 +31,16 @@ note this subject to change**
 2. Navigate to the project directory: `cd indexing`
 3. Run the program: `go run ./cmd/indexing_dev`
 
+## TODO
+
+- [ ] Graceful shutdown
+- [ ] Index all drives/files
+- [ ] Better error handling on access denied
+- [ ] Improve search algorithm
+- [ ] USB version for indexing single drive
+- [ ] Darwin (macOS) support
+- [ ] Linux support
+
 ## Contributing
 
 Contributions are welcome! If you'd like to contribute to Indexing, please follow these steps:
