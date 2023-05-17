@@ -334,29 +334,28 @@ func (i *Index) FindNewFiles(path string) {
 }
 
 func (i *Index) CheckForRemovedFiles() {
-	// Get copy of map
-	files := i.GetIndexMap()
+	var toDelete []string
 
-	for _, file := range files {
-		if _, err := os.Stat(file.FullPath); err != nil {
-			if os.IsNotExist(err) {
-				err := i.RemoveIndex(file.FullPath)
-
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				log.Printf("File %s has been removed", file.FullPath)
-			}
+	i.FilesMapLock.RLock()
+	for path, file := range *i.FilesMap {
+		if _, err := os.Stat(file.FullPath); os.IsNotExist(err) {
+			toDelete = append(toDelete, path)
+			log.Printf("File %s has been removed", file.FullPath)
 		}
+	}
+	i.FilesMapLock.RUnlock()
+
+	if len(toDelete) > 0 {
+		i.FilesMapLock.Lock()
+		for _, path := range toDelete {
+			delete(*i.FilesMap, path)
+		}
+		i.FilesMapLock.Unlock()
 	}
 }
 
 func (i *Index) StoreIndex(fullPath string, file File) error {
-	i.FilesMapLock.RLock()
-	_, ok := (*i.FilesMap)[fullPath]
-	i.FilesMapLock.RUnlock()
+	ok := i.ExistIndex(fullPath)
 
 	if ok {
 		return nil
@@ -389,6 +388,14 @@ func (i *Index) GetIndex(path string) (File, error) {
 	}
 
 	return file, nil
+}
+
+func (i *Index) ExistIndex(path string) bool {
+	i.FilesMapLock.RLock()
+	defer i.FilesMapLock.RUnlock()
+
+	_, ok := (*i.FilesMap)[path]
+	return ok
 }
 
 func (i *Index) GetIndexMap() map[string]File {
