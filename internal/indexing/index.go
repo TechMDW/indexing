@@ -72,15 +72,15 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 	}
 
 	fileInfo := File{
-		Name:      file.Name(),
-		Extension: filepath.Ext(file.Name()),
-		Path:      path,
-		FullPath:  fmt.Sprintf("%s/%s", path, file.Name()),
-		Size:      info.Size(),
-		IsHidden:  file.Name()[0] == '.',
-		IsDir:     file.IsDir(),
-		ModTime:   info.ModTime(),
-		// WindowsAttributes: windowsAttr,
+		Name:              file.Name(),
+		Extension:         filepath.Ext(file.Name()),
+		Path:              path,
+		FullPath:          fmt.Sprintf("%s/%s", path, file.Name()),
+		Size:              info.Size(),
+		IsHidden:          file.Name()[0] == '.',
+		IsDir:             file.IsDir(),
+		ModTime:           info.ModTime(),
+		WindowsAttributes: windowsAttr,
 		Permissions: Permissions{
 			Permission: info.Mode(),
 		},
@@ -133,11 +133,11 @@ func IndexDirectory(path string, index *Index) error {
 	var wg = sync.WaitGroup{}
 
 	for _, file := range files {
-		lim <- struct{}{} // acquire a slot
+		lim <- struct{}{}
 		wg.Add(1)
 		go func(file fs.DirEntry) {
 			defer wg.Done()
-			defer func() { <-lim }() // make sure to release the slot
+			defer func() { <-lim }()
 
 			indexedFile, err := IndexFile(path, file)
 			if err != nil {
