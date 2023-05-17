@@ -61,10 +61,9 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 		if err != nil {
 			Error = err
 		}
+		defer f.Close()
 
 		if Error == nil {
-			defer f.Close()
-
 			hashes, err = hash.HashFile(f)
 			if err != nil {
 				Error = err
@@ -73,15 +72,15 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 	}
 
 	fileInfo := File{
-		Name:              file.Name(),
-		Extension:         filepath.Ext(file.Name()),
-		Path:              path,
-		FullPath:          fmt.Sprintf("%s/%s", path, file.Name()),
-		Size:              info.Size(),
-		IsHidden:          file.Name()[0] == '.',
-		IsDir:             file.IsDir(),
-		ModTime:           info.ModTime(),
-		WindowsAttributes: windowsAttr,
+		Name:      file.Name(),
+		Extension: filepath.Ext(file.Name()),
+		Path:      path,
+		FullPath:  fmt.Sprintf("%s/%s", path, file.Name()),
+		Size:      info.Size(),
+		IsHidden:  file.Name()[0] == '.',
+		IsDir:     file.IsDir(),
+		ModTime:   info.ModTime(),
+		// WindowsAttributes: windowsAttr,
 		Permissions: Permissions{
 			Permission: info.Mode(),
 		},
@@ -215,25 +214,25 @@ func GetIndexInstance() (*Index, error) {
 
 // TODO: Don't like this function...
 func (i *Index) handler() {
-	var autoStoreFunc func()
-	autoStoreFunc = func() {
-		if i.newFilesSinceStore != 0 {
-			i.StoreFileIndex()
-		}
-		time.AfterFunc(1*time.Minute, autoStoreFunc)
-	}
-	go autoStoreFunc()
+	// var autoStoreFunc func()
+	// autoStoreFunc = func() {
+	// 	if i.newFilesSinceStore != 0 {
+	// 		i.StoreFileIndex()
+	// 	}
+	// 	time.AfterFunc(1*time.Minute, autoStoreFunc)
+	// }
+	// go autoStoreFunc()
 
-	var storeFunc func()
-	storeFunc = func() {
-		if i.newFilesSinceStore >= 50 {
-			i.StoreFileIndex()
-		} else if time.Since(i.lastStore) >= 1*time.Minute && i.newFilesSinceStore != 0 {
-			i.StoreFileIndex()
-		}
-		time.AfterFunc(5*time.Second, storeFunc)
-	}
-	go storeFunc()
+	// var storeFunc func()
+	// storeFunc = func() {
+	// 	if i.newFilesSinceStore >= 50 {
+	// 		i.StoreFileIndex()
+	// 	} else if time.Since(i.lastStore) >= 1*time.Minute && i.newFilesSinceStore != 0 {
+	// 		i.StoreFileIndex()
+	// 	}
+	// 	time.AfterFunc(5*time.Second, storeFunc)
+	// }
+	// go storeFunc()
 
 	// var newFilesFunc func()
 	// newFilesFunc = func() {
@@ -379,50 +378,40 @@ func (i *Index) FindNewFiles(path string) {
 		go func(file fs.DirEntry) {
 			defer wg.Done()
 			defer func() { <-lim }()
-		}(file)
-		filePath := fmt.Sprintf("%s/%s", path, file.Name())
 
-		if file.IsDir() {
-			i.FindNewFiles(fmt.Sprintf("%s/%s", path, file.Name()))
-			continue
-		}
+			filePath := fmt.Sprintf("%s/%s", path, file.Name())
 
-		currFile, err := i.GetIndex(filePath)
-
-		if err != nil {
-			if errors.Is(err, ErrFileNotFound) {
-				indexedFile, err := IndexFile(path, file)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				err = i.StoreIndex(filePath, *indexedFile)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
+			if file.IsDir() {
+				i.FindNewFiles(filePath)
+				return
 			}
 
-			continue
-		}
+			currFile, err := i.GetIndex(filePath)
 
-		if checksum(filePath, currFile.Hash.MD5) {
-			continue
-		}
+			if err != nil {
+				log.Println(err)
+				return
+			}
 
-		indexedFile, err := IndexFile(path, file)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
+			if checksum(filePath, currFile.Hash.MD5) {
+				return
+			}
 
-		err = i.StoreIndex(filePath, *indexedFile)
-		if err != nil {
-			log.Println(err)
-			continue
-		}
+			indexedFile, err := IndexFile(path, file)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+
+			err = i.StoreIndex(filePath, *indexedFile)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+		}(file)
 	}
+
+	wg.Wait()
 }
 
 func (i *Index) CheckForRemovedFiles() {
