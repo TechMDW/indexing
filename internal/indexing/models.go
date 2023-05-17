@@ -22,20 +22,21 @@ type Index struct {
 }
 
 type File struct {
-	Name              string      `json:"name"`
-	Extension         string      `json:"ext"`
-	Path              string      `json:"path"`
-	FullPath          string      `json:"fullPath"`
-	Size              int64       `json:"size"`
-	IsHidden          bool        `json:"isHidden"`
-	IsDir             bool        `json:"isDir"`
-	CreatedTime       time.Time   `json:"created"`
-	ModTime           time.Time   `json:"modTime"`
-	AccessedTime      time.Time   `json:"accessed"`
-	Permissions       Permissions `json:"permissions"`
-	Hash              hash.Hash   `json:"hash"`
-	Error             string      `json:"error,omitempty"`
-	internal_metadata internal_metadata
+	Name                  string      `json:"name"`
+	Extension             string      `json:"ext"`
+	Path                  string      `json:"path"`
+	FullPath              string      `json:"fullPath"`
+	Size                  int64       `json:"size"`
+	IsHidden              bool        `json:"isHidden"`
+	IsDir                 bool        `json:"isDir"`
+	IsOneDrivePlaceholder bool        `json:"isOneDrive"`
+	CreatedTime           time.Time   `json:"created"`
+	ModTime               time.Time   `json:"modTime"`
+	AccessedTime          time.Time   `json:"accessed"`
+	Permissions           Permissions `json:"permissions"`
+	Hash                  hash.Hash   `json:"hash"`
+	Error                 string      `json:"error,omitempty"`
+	internal_metadata     internal_metadata
 }
 
 type internal_metadata struct {

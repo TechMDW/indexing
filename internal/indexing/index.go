@@ -29,6 +29,26 @@ var (
 var lim = make(chan struct{}, MaxGoRoutines)
 
 func IndexFile(path string, file fs.DirEntry) (*File, error) {
+	oneDrive, oneDriveErr := isOneDrivePlaceholder(fmt.Sprintf("%s/%s", path, file.Name()))
+	if oneDriveErr != nil {
+		return nil, oneDriveErr
+	}
+
+	if oneDrive {
+		fileInfo := File{
+			Name:                  file.Name(),
+			Extension:             filepath.Ext(file.Name()),
+			Path:                  path,
+			FullPath:              fmt.Sprintf("%s/%s", path, file.Name()),
+			IsHidden:              file.Name()[0] == '.',
+			IsDir:                 file.IsDir(),
+			IsOneDrivePlaceholder: true,
+			Permissions:           Permissions{},
+		}
+
+		return &fileInfo, nil
+	}
+
 	info, err := file.Info()
 	if err != nil {
 		return nil, err
