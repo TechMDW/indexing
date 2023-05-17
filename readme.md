@@ -15,12 +15,21 @@ Indexing is a simple search tool that allows users to search for specific conten
 
 ## Current way of usage
 
-note this subject to change
+#### Solution 1 (graphical)
+
+**IMPORTANT when using this you will need a c++ compiler for the keybinds
+note this subject to change**
 
 1. Clone the repository: `git clone https://github.com/TechMDW/indexing.git`
 2. Navigate to the project directory: `cd indexing`
-3. Install the required dependencies: `go run cmd/indexing`
-4. use the `cntrl + space` to toggle the search bar if its visible
+3. Run the program: `go run ./cmd/indexing`
+4. use the `ctrl + space` to toggle the search bar if its visible
+
+#### Solution 2 (development, no c++ compiler)
+
+1. Clone the repository: `git clone https://github.com/TechMDW/indexing.git`
+2. Navigate to the project directory: `cd indexing`
+3. Run the program: `go run ./cmd/indexing_dev`
 
 ## Contributing
 
