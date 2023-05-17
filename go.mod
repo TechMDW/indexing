@@ -1,4 +1,4 @@
-module indexing
+module github.com/TechMDW/indexing
 
 go 1.20
 

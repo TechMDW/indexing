@@ -3,9 +3,10 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"indexing/internal/indexing"
 	"log"
 	"os"
+
+	"github.com/TechMDW/indexing/internal/indexing"
 
 	"github.com/asticode/go-astikit"
 	"github.com/asticode/go-astilectron"

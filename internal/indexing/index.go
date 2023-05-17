@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"indexing/internal/hash"
 	"io"
 	"io/fs"
 	"log"
@@ -15,6 +14,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/TechMDW/indexing/internal/attributes"
+	"github.com/TechMDW/indexing/internal/hash"
 
 	"github.com/pierrec/lz4/v4"
 )
@@ -29,12 +31,9 @@ var (
 var lim = make(chan struct{}, MaxGoRoutines)
 
 func IndexFile(path string, file fs.DirEntry) (*File, error) {
-	oneDrive, oneDriveErr := isOneDrivePlaceholder(fmt.Sprintf("%s/%s", path, file.Name()))
-	if oneDriveErr != nil {
-		return nil, oneDriveErr
-	}
+	windowsAttr, err := attributes.GetFileAttributes(path)
 
-	if oneDrive {
+	if windowsAttr.OneDrive || err != nil {
 		fileInfo := File{
 			Name:                  file.Name(),
 			Extension:             filepath.Ext(file.Name()),
@@ -42,6 +41,7 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 			FullPath:              fmt.Sprintf("%s/%s", path, file.Name()),
 			IsHidden:              file.Name()[0] == '.',
 			IsDir:                 file.IsDir(),
+			WindowsAttributes:     windowsAttr,
 			IsOneDrivePlaceholder: true,
 			Permissions:           Permissions{},
 		}
@@ -73,14 +73,15 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 	}
 
 	fileInfo := File{
-		Name:      file.Name(),
-		Extension: filepath.Ext(file.Name()),
-		Path:      path,
-		FullPath:  fmt.Sprintf("%s/%s", path, file.Name()),
-		Size:      info.Size(),
-		IsHidden:  file.Name()[0] == '.',
-		IsDir:     file.IsDir(),
-		ModTime:   info.ModTime(),
+		Name:              file.Name(),
+		Extension:         filepath.Ext(file.Name()),
+		Path:              path,
+		FullPath:          fmt.Sprintf("%s/%s", path, file.Name()),
+		Size:              info.Size(),
+		IsHidden:          file.Name()[0] == '.',
+		IsDir:             file.IsDir(),
+		ModTime:           info.ModTime(),
+		WindowsAttributes: windowsAttr,
 		Permissions: Permissions{
 			Permission: info.Mode(),
 		},

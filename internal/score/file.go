@@ -2,8 +2,9 @@ package score
 
 import (
 	"fmt"
-	"indexing/internal/indexing"
 	"strings"
+
+	"github.com/TechMDW/indexing/internal/indexing"
 )
 
 type FileScore struct {

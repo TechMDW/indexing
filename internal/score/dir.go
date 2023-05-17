@@ -1,9 +1,10 @@
 package score
 
 import (
-	"indexing/internal/indexing"
 	"regexp"
 	"strings"
+
+	"github.com/TechMDW/indexing/internal/indexing"
 )
 
 type DirScore struct {
