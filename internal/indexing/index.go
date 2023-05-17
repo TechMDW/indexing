@@ -132,10 +132,12 @@ func IndexDirectory(path string, index *Index) error {
 
 // Singleton function to get the index instance
 func GetIndexInstance() (*Index, error) {
+	m := make(map[string]File)
+	// a := []File{}
 	once.Do(func() {
 		idx = &Index{
-			FilesMap:   make(map[string]File),
-			FilesArray: []File{},
+			FilesMap: &m,
+			// FilesArray: &a,
 		}
 
 		rootPath, err := os.Getwd()
@@ -236,9 +238,10 @@ func (i *Index) handler() {
 func (i *Index) Search(q string) []File {
 	var results []File
 
-	i.FilesArrayLock.RLock()
-	defer i.FilesArrayLock.RUnlock()
-	for _, file := range i.FilesArray {
+	i.FilesMapLock.RLock()
+	defer i.FilesMapLock.RUnlock()
+	startTime := time.Now()
+	for _, file := range *i.FilesMap {
 		var scoreTotal int
 		var score_data interface{}
 
@@ -255,6 +258,7 @@ func (i *Index) Search(q string) []File {
 		}
 	}
 
+	log.Printf("Search took %s", time.Since(startTime))
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].internal_metadata.score > results[j].internal_metadata.score
 	})
@@ -305,32 +309,33 @@ func (i *Index) FindNewFiles(path string) {
 			continue
 		}
 
-		i.FilesMapLock.RLock()
-		currFile, found := i.FilesMap[filePath]
-		i.FilesMapLock.RUnlock()
+		currFile, err := i.GetIndex(filePath)
 
-		if found && checksum(filePath, currFile.Hash.MD5) {
+		if err != nil {
+			continue
+		}
+
+		if checksum(filePath, currFile.Hash.MD5) {
 			continue
 		}
 
 		indexedFile, err := IndexFile(path, file)
 		if err != nil {
 			log.Println(err)
-			return
+			continue
 		}
 
 		err = i.StoreIndex(filePath, *indexedFile)
 		if err != nil {
 			log.Println(err)
-			return
+			continue
 		}
 	}
 }
 
 func (i *Index) CheckForRemovedFiles() {
-	i.FilesArrayLock.RLock()
-	files := i.FilesArray
-	i.FilesArrayLock.RUnlock()
+	// Get copy of map
+	files := i.GetIndexMap()
 
 	for _, file := range files {
 		if _, err := os.Stat(file.FullPath); err != nil {
@@ -349,59 +354,27 @@ func (i *Index) CheckForRemovedFiles() {
 }
 
 func (i *Index) StoreIndex(fullPath string, file File) error {
+	i.FilesMapLock.RLock()
+	_, ok := (*i.FilesMap)[fullPath]
+	i.FilesMapLock.RUnlock()
+
+	if ok {
+		return nil
+	}
+
 	i.FilesMapLock.Lock()
-	i.FilesMap[fullPath] = file
+	(*i.FilesMap)[fullPath] = file
 	i.FilesMapLock.Unlock()
 
-	i.FilesArrayLock.RLock()
-
-	var found bool
-	var index int
-	for y := 0; y < len(i.FilesArray); y++ {
-		if i.FilesArray[y].FullPath == fullPath {
-			found = true
-			index = y
-			break
-		}
-	}
-
-	i.FilesArrayLock.RUnlock()
-
 	i.newFilesSinceStore++
-
-	if found {
-		i.FilesArrayLock.Lock()
-		i.FilesArray[index] = file
-		i.FilesArrayLock.Unlock()
-	} else {
-		i.FilesArrayLock.Lock()
-		i.FilesArray = append(i.FilesArray, file)
-		i.FilesArrayLock.Unlock()
-	}
 
 	return nil
 }
 
 func (i *Index) RemoveIndex(path string) error {
 	i.FilesMapLock.Lock()
-	delete(i.FilesMap, path)
+	delete(*i.FilesMap, path)
 	i.FilesMapLock.Unlock()
-
-	i.FilesArrayLock.Lock()
-	defer i.FilesArrayLock.Unlock()
-
-	var found bool
-	for index, file := range i.FilesArray {
-		if file.FullPath == path {
-			i.FilesArray = append(i.FilesArray[:index], i.FilesArray[index+1:]...)
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return ErrFileNotFound
-	}
 
 	return nil
 }
@@ -410,7 +383,7 @@ func (i *Index) GetIndex(path string) (File, error) {
 	i.FilesMapLock.RLock()
 	defer i.FilesMapLock.RUnlock()
 
-	file, ok := i.FilesMap[path]
+	file, ok := (*i.FilesMap)[path]
 	if !ok {
 		return File{}, ErrFileNotFound
 	}
@@ -418,25 +391,16 @@ func (i *Index) GetIndex(path string) (File, error) {
 	return file, nil
 }
 
-func (i *Index) GetIndexArray() []File {
-	i.FilesArrayLock.RLock()
-	defer i.FilesArrayLock.RUnlock()
-
-	return i.FilesArray
-}
-
 func (i *Index) GetIndexMap() map[string]File {
 	i.FilesMapLock.RLock()
 	defer i.FilesMapLock.RUnlock()
 
-	return i.FilesMap
+	return *i.FilesMap
 }
 
 func (i *Index) LoadFileIndex(path string) error {
 	i.FilesMapLock.Lock()
 	defer i.FilesMapLock.Unlock()
-	i.FilesArrayLock.Lock()
-	defer i.FilesArrayLock.Unlock()
 
 	path = path + IndexFileName
 
@@ -452,17 +416,6 @@ func (i *Index) LoadFileIndex(path string) error {
 	err = decoder.Decode(&i.FilesMap)
 	if err != nil && err != io.EOF {
 		return err
-	}
-
-	if err == io.EOF {
-		i.FilesMap = make(map[string]File)
-		i.FilesArray = []File{}
-		return nil
-	}
-
-	i.FilesArray = nil
-	for _, file := range i.FilesMap {
-		i.FilesArray = append(i.FilesArray, file)
 	}
 
 	return nil

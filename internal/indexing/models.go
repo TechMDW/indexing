@@ -12,10 +12,10 @@ import (
 )
 
 type Index struct {
-	FilesMapLock       sync.RWMutex    `json:"-"`
-	FilesMap           map[string]File `json:"files"`
-	FilesArrayLock     sync.RWMutex    `json:"-"`
-	FilesArray         []File          `json:"filesArray"`
+	FilesMapLock       sync.RWMutex     `json:"-"`
+	FilesMap           *map[string]File `json:"files"`
+	FilesArrayLock     sync.RWMutex     `json:"-"`
+	FilesArray         *[]File          `json:"filesArray"`
 	rootPath           string
 	newFilesSinceStore int
 	lastStore          time.Time
