@@ -11,11 +11,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/TechMDW/indexing/internal/attributes"
+	"github.com/TechMDW/indexing/internal/graceful"
 	"github.com/TechMDW/indexing/internal/hash"
 
 	"github.com/pierrec/lz4/v4"
@@ -95,7 +95,7 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 	return &fileInfo, nil
 }
 
-func IndexFileWithoutPermissions(path string, info fs.FileInfo) (*File, error) {
+func IndexFileWithoutPermissions(path string, info fs.FileInfo) File {
 	var fullPath string
 
 	if info.IsDir() {
@@ -104,19 +104,27 @@ func IndexFileWithoutPermissions(path string, info fs.FileInfo) (*File, error) {
 		fullPath = fmt.Sprintf("%s/%s", path, info.Name())
 	}
 
-	return &File{
-		Name:      info.Name(),
-		Extension: filepath.Ext(info.Name()),
-		Path:      path,
-		FullPath:  fullPath,
-		Size:      info.Size(),
-		IsHidden:  info.Name()[0] == '.',
-		IsDir:     info.IsDir(),
-		ModTime:   info.ModTime(),
-		Error:     ErrNotAllowedToRead.Error(),
-	}, nil
+	fmt.Println("Indexing without permissions:", fullPath)
+
+	attr, _ := attributes.GetFileAttributes(path)
+
+	file := File{
+		Name:              info.Name(),
+		Extension:         filepath.Ext(info.Name()),
+		Path:              path,
+		FullPath:          fullPath,
+		Size:              info.Size(),
+		IsHidden:          info.Name()[0] == '.',
+		IsDir:             info.IsDir(),
+		ModTime:           info.ModTime(),
+		WindowsAttributes: attr,
+		Error:             ErrNotAllowedToRead.Error(),
+	}
+
+	return file
 }
 
+// DEPRECATED
 func IndexDirectory(path string, index *Index) error {
 	files, err := os.ReadDir(path)
 	if err != nil {
@@ -151,72 +159,66 @@ func IndexDirectory(path string, index *Index) error {
 	return nil
 }
 
-// Singleton function to get the index instance
 func GetIndexInstance() (*Index, error) {
-	m := make(map[string]File)
-	// a := []File{}
 	once.Do(func() {
+		m := make(map[string]File)
+
 		idx = &Index{
-			FilesMap: &m,
-			// FilesArray: &a,
+			FilesMap:        &m,
+			WindowsDrives:   &[]string{},
+			FindNewFilesMap: &map[string]struct{}{},
 		}
 
-		rootPath, err := os.Getwd()
-		if err != nil {
-			log.Fatal(err)
-		}
+		// Load index from file
+		idx.LoadFileIndex()
 
 		// Get windows or linux
 		oss := runtime.GOOS
 
 		switch oss {
 		case "windows":
-			rootPath = strings.Split(rootPath, ":")[0] + ":/"
+			// Loop through all possible drives on Windows
+			for _, driveLetter := range WIN_PossibleDriveLetters {
+				drivePath := fmt.Sprintf("%s:/", string(driveLetter))
+				if _, err := os.Stat(drivePath); !os.IsNotExist(err) {
+					log.Printf("Found drive %s\n", drivePath)
+					idx.WindowsDrivesLock.Lock()
+					*idx.WindowsDrives = append(*idx.WindowsDrives, drivePath)
+					idx.WindowsDrivesLock.Unlock()
+					// Find new files on the drive
+					go func(drivePath string) {
+						idx.FindNewFiles(drivePath)
+					}(drivePath)
+				}
+			}
 		case "linux":
-			if rootPath == "/" {
-				break
-			}
-
-			split := strings.Split(rootPath, "/")
-			rootPath = fmt.Sprintf("/%s", split[1])
+			rootPath := "/"
+			go func() {
+				idx.FindNewFiles(rootPath)
+			}()
 		case "darwin":
-			if rootPath == "/" {
-				break
-			}
-
-			split := strings.Split(rootPath, "/")
-			rootPath = fmt.Sprintf("/%s", split[1])
+			rootPath := "/"
+			go func() {
+				idx.FindNewFiles(rootPath)
+			}()
 		default:
+			ErrIdx = errors.New("unsupported operating system")
+			return
 		}
 
-		idx.rootPath = rootPath
-
-		err = idx.LoadFileIndex(rootPath)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				go func() {
-					err := IndexDirectory(rootPath, idx)
-					if err != nil {
-						log.Println(err)
-					}
-				}()
-			} else {
-				ErrIdx = err
-				return
-			}
-		}
-
+		log.Println("Starting handler")
 		go idx.handler()
 	})
 
 	return idx, ErrIdx
 }
 
+// TODO: Don't like this function...
 func (i *Index) handler() {
 	var autoStoreFunc func()
 	autoStoreFunc = func() {
 		if i.newFilesSinceStore != 0 {
-			i.StoreFileIndex(i.rootPath)
+			i.StoreFileIndex()
 		}
 		time.AfterFunc(1*time.Minute, autoStoreFunc)
 	}
@@ -225,33 +227,69 @@ func (i *Index) handler() {
 	var storeFunc func()
 	storeFunc = func() {
 		if i.newFilesSinceStore >= 50 {
-			i.StoreFileIndex(i.rootPath)
+			i.StoreFileIndex()
+		} else if time.Since(i.lastStore) >= 1*time.Minute && i.newFilesSinceStore != 0 {
+			i.StoreFileIndex()
 		}
 		time.AfterFunc(5*time.Second, storeFunc)
 	}
 	go storeFunc()
 
-	var newFilesFunc func()
-	newFilesFunc = func() {
-		i.FindNewFiles(i.rootPath)
-		time.AfterFunc(1*time.Minute, newFilesFunc)
-	}
+	// var newFilesFunc func()
+	// newFilesFunc = func() {
+	// 	if runtime.GOOS == "windows" {
+	// 		for _, drive := range *idx.WindowsDrives {
+	// 			idx.FindNewFiles(drive)
+	// 		}
+	// 	} else if runtime.GOOS == "linux" {
+	// 		idx.FindNewFiles("/")
+	// 	} else if runtime.GOOS == "darwin" {
+	// 		idx.FindNewFiles("/")
+	// 	}
+
+	// 	time.AfterFunc(30*time.Second, newFilesFunc)
+	// }
 
 	var removedFilesFunc func()
 	removedFilesFunc = func() {
 		i.CheckForRemovedFiles()
-		time.AfterFunc(30*time.Second, removedFilesFunc)
+		time.AfterFunc(15*time.Second, removedFilesFunc)
+	}
+
+	var checkForNewDrives func()
+	checkForNewDrives = func() {
+		if runtime.GOOS == "windows" {
+			for _, driveLetter := range WIN_PossibleDriveLetters {
+				drivePath := fmt.Sprintf("%s:/", string(driveLetter))
+				if _, err := os.Stat(drivePath); !os.IsNotExist(err) {
+					for _, drive := range *idx.WindowsDrives {
+						if drive == drivePath {
+							continue
+						}
+
+						idx.WindowsDrivesLock.Lock()
+						*idx.WindowsDrives = append(*idx.WindowsDrives, drivePath)
+						idx.WindowsDrivesLock.Unlock()
+					}
+				}
+			}
+		}
+
+		time.AfterFunc(10*time.Second, checkForNewDrives)
 	}
 
 	delayNewFiles := time.NewTimer(1 * time.Minute)
 	delayRemovedFiles := time.NewTimer(30 * time.Second)
+	delayCheckForNewDrives := time.NewTimer(30 * time.Second)
 
 	for {
 		select {
 		case <-delayNewFiles.C:
-			go newFilesFunc()
+			// go newFilesFunc()
 		case <-delayRemovedFiles.C:
 			go removedFilesFunc()
+		case <-delayCheckForNewDrives.C:
+			go checkForNewDrives()
 		}
 	}
 }
@@ -292,37 +330,56 @@ func (i *Index) Search(q string) []File {
 }
 
 func (i *Index) FindNewFiles(path string) {
-	files, err := os.ReadDir(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrPermission) {
-			stats, err := os.Stat(path)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-
-			log.Println("Not allowed to read file/folder, indexing without permissions", path)
-			file, err := IndexFileWithoutPermissions(path, stats)
-
-			if err != nil {
-				log.Println(err)
-				return
-			}
-
-			err = i.StoreIndex(path, *file)
-
-			if err != nil {
-				log.Println(err)
-				return
-			}
-
-			return
-		}
-		log.Println(err)
+	// Check if this path is already being processed
+	i.FindNewFilesMapLock.Lock()
+	if _, ok := (*i.FindNewFilesMap)[path]; ok {
+		i.FindNewFilesMapLock.Unlock()
 		return
 	}
 
+	// Mark this path as being processed
+	(*i.FindNewFilesMap)[path] = struct{}{}
+	i.FindNewFilesMapLock.Unlock()
+
+	defer func() {
+		// Mark this path as no longer being processed
+		i.FindNewFilesMapLock.Lock()
+		delete(*i.FindNewFilesMap, path)
+		i.FindNewFilesMapLock.Unlock()
+	}()
+
+	files, err := os.ReadDir(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		stats, err := os.Stat(path)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		file := IndexFileWithoutPermissions(path, stats)
+
+		err = i.StoreIndex(path, file)
+
+		if err != nil {
+			log.Println("StoreIndexErr:", err)
+			return
+		}
+
+		return
+	}
+
+	wg := sync.WaitGroup{}
+
 	for _, file := range files {
+		lim <- struct{}{}
+		wg.Add(1)
+		go func(file fs.DirEntry) {
+			defer wg.Done()
+			defer func() { <-lim }()
+		}(file)
 		filePath := fmt.Sprintf("%s/%s", path, file.Name())
 
 		if file.IsDir() {
@@ -333,6 +390,20 @@ func (i *Index) FindNewFiles(path string) {
 		currFile, err := i.GetIndex(filePath)
 
 		if err != nil {
+			if errors.Is(err, ErrFileNotFound) {
+				indexedFile, err := IndexFile(path, file)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+
+				err = i.StoreIndex(filePath, *indexedFile)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+			}
+
 			continue
 		}
 
@@ -426,11 +497,15 @@ func (i *Index) GetIndexMap() map[string]File {
 	return *i.FilesMap
 }
 
-func (i *Index) LoadFileIndex(path string) error {
+func (i *Index) LoadFileIndex() error {
 	i.FilesMapLock.Lock()
 	defer i.FilesMapLock.Unlock()
 
-	path = path + IndexFileName
+	path, err := getTechMDWDir()
+
+	if err != nil {
+		return err
+	}
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -449,14 +524,33 @@ func (i *Index) LoadFileIndex(path string) error {
 	return nil
 }
 
-func (i *Index) StoreFileIndex(path string) error {
+func (i *Index) StoreFileIndex() error {
+	g := graceful.Shutdown()
+	g.AddTask()
+	defer g.DoneTask()
+
 	i.FilesMapLock.RLock()
 	defer i.FilesMapLock.RUnlock()
 
-	path = path + IndexFileName
+	path, err := getTechMDWDir()
+
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	dir := filepath.Dir(path)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		err = os.MkdirAll(dir, 0755)
+		if err != nil {
+			log.Println(err)
+			return err
+		}
+	}
 
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0644)
 	if err != nil {
+		log.Println(err)
 		return err
 	}
 	defer file.Close()

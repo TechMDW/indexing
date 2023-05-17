@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,13 +14,16 @@ import (
 )
 
 type Index struct {
-	FilesMapLock       sync.RWMutex     `json:"-"`
-	FilesMap           *map[string]File `json:"files"`
-	FilesArrayLock     sync.RWMutex     `json:"-"`
-	FilesArray         *[]File          `json:"filesArray"`
-	rootPath           string
-	newFilesSinceStore int
-	lastStore          time.Time
+	FilesMapLock        sync.RWMutex         `json:"-"`
+	FilesMap            *map[string]File     `json:"files"`
+	FilesArrayLock      sync.RWMutex         `json:"-"`
+	FilesArray          *[]File              `json:"filesArray"`
+	WindowsDrivesLock   sync.RWMutex         `json:"-"`
+	WindowsDrives       *[]string            `json:"windowsDrivesArray"`
+	FindNewFilesMap     *map[string]struct{} `json:"-"`
+	FindNewFilesMapLock sync.RWMutex         `json:"-"`
+	newFilesSinceStore  int
+	lastStore           time.Time
 }
 
 type File struct {
@@ -42,8 +46,8 @@ type File struct {
 }
 
 type internal_metadata struct {
-	score      int         `json:"score,omitempty"`
-	score_data interface{} `json:"score_data,omitempty"`
+	score      int
+	score_data interface{}
 }
 
 type Permissions struct {
@@ -72,4 +76,16 @@ func checksum(filePath string, hash string) bool {
 	}
 
 	return fmt.Sprintf("%x", hasher.Sum(nil)) == hash
+}
+
+func getTechMDWDir() (string, error) {
+	path, err := os.UserConfigDir()
+
+	if err != nil {
+		return "", err
+	}
+
+	goDownHistoryPath := filepath.Join(path, "TechMDW", "indexing", IndexFileName)
+
+	return goDownHistoryPath, nil
 }

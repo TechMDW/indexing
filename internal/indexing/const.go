@@ -9,11 +9,13 @@ var (
 )
 
 const (
-	IndexFileName = ".TechMDW_Indexing.json.lz4"
+	IndexFileName = ".index.json.lz4"
 )
 
 const (
-	MaxGoRoutines = 15
+	MaxGoRoutines = 60
 
 	MaxResults = 500
+
+	WIN_PossibleDriveLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 )
