@@ -18,9 +18,9 @@ type WindowsAttributes struct {
 	Normal            bool `json:"normal"`
 	Temporary         bool `json:"temporary"`
 	Offline           bool `json:"offline"`
-	NotContentIndexed bool `json:"not_content_indexed"`
+	NotContentIndexed bool `json:"notContentIndexed"`
 	Encrypted         bool `json:"encrypted"`
-	OneDrive          bool `json:"one_drive"`
+	OneDrive          bool `json:"oneDrive"`
 }
 
 func GetFileAttributes(path string) (WindowsAttributes, error) {

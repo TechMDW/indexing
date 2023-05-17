@@ -55,7 +55,7 @@ func startWindow(a *astilectron.Astilectron) {
 	}
 
 	w.Create()
-	//w.OpenDevTools()
+	w.OpenDevTools()
 	listenForInput(w)
 }
 
