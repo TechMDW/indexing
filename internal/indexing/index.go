@@ -182,7 +182,7 @@ func GetIndexInstance() (*Index, error) {
 		}
 
 		// Load index from file
-		idx.LoadFileIndex()
+		go idx.LoadFileIndex()
 
 		// Get windows or linux
 		oss := runtime.GOOS
@@ -254,6 +254,10 @@ func (i *Index) handler() {
 
 	var newFilesFunc func()
 	newFilesFunc = func() {
+		if atomic.LoadInt64(&i.lastFileIndexLoad) == 0 {
+			fmt.Println("Loading index from file still in progress...")
+			time.AfterFunc(30*time.Second, newFilesFunc)
+		}
 		oss := runtime.GOOS
 		switch oss {
 		case "windows":
@@ -635,6 +639,7 @@ func (i *Index) ExistIndex(key string) bool {
 	return ok
 }
 
+// LoadFileIndex reads the FilesMap from disk in NDJSON format.
 func (i *Index) LoadFileIndex() error {
 	path, err := getTechMDWDir()
 
@@ -649,17 +654,26 @@ func (i *Index) LoadFileIndex() error {
 	defer file.Close()
 
 	lz4Reader := lz4.NewReader(file)
-
 	decoder := json.NewDecoder(lz4Reader)
-	var decodedMap map[string]File
-	err = decoder.Decode(&decodedMap)
-	if err != nil && err != io.EOF {
-		return err
+
+	for {
+		var entry struct {
+			Key   string
+			Value File
+		}
+
+		err := decoder.Decode(&entry)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		i.FilesMap.Store(entry.Key, entry.Value)
 	}
 
-	for key, value := range decodedMap {
-		i.FilesMap.Store(key, value)
-	}
+	atomic.StoreInt64(&i.lastFileIndexLoad, time.Now().Unix())
 
 	return nil
 }
@@ -679,15 +693,7 @@ func (i *Index) StoreFileIndex() error {
 	g.AddTask()
 	defer g.DoneTask()
 
-	// Make a copy of the FilesMap.
-	copiedFilesMap := make(map[string]File)
-	i.FilesMap.Range(func(key, value interface{}) bool {
-		copiedFilesMap[key.(string)] = value.(File)
-		return true
-	})
-
 	path, err := getTechMDWDir()
-
 	if err != nil {
 		log.Println(err)
 		return err
@@ -710,15 +716,26 @@ func (i *Index) StoreFileIndex() error {
 	defer file.Close()
 
 	lz4Writer := lz4.NewWriter(file)
+	defer lz4Writer.Close()
 
 	encoder := json.NewEncoder(lz4Writer)
-	if err := encoder.Encode(copiedFilesMap); err != nil {
-		return err
-	}
 
-	if err := lz4Writer.Close(); err != nil {
-		return err
-	}
+	i.FilesMap.Range(func(key, value interface{}) bool {
+		entry := struct {
+			Key   string
+			Value File
+		}{
+			Key:   key.(string),
+			Value: value.(File),
+		}
+
+		if err := encoder.Encode(entry); err != nil {
+			log.Println(err)
+			return false
+		}
+
+		return true
+	})
 
 	i.updateLastStore()
 

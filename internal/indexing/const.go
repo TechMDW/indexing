@@ -9,7 +9,7 @@ var (
 )
 
 const (
-	IndexFileName = ".index.json.lz4"
+	IndexFileName = ".index.ndjson.lz4"
 )
 
 const (

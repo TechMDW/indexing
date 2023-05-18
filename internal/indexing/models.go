@@ -15,6 +15,7 @@ type Index struct {
 	WindowsDrivesLock  sync.RWMutex `json:"-"`
 	WindowsDrives      *[]string    `json:"windowsDrivesArray"`
 	FindNewFilesMap    sync.Map     `json:"-"`
+	lastFileIndexLoad  int64
 	newFilesSinceStore int32
 	lastStore          int64
 }

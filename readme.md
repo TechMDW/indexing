@@ -35,9 +35,10 @@ note this is subject to change**
 
 - [x] Graceful shutdown
 - [x] Index all drives/files
-- [ ] Better error handling on access denied
+- [x] Better error handling on access denied
 - [ ] Improve search algorithm
 - [ ] USB version for indexing single drive
+- [ ] Load config file
 - [ ] Darwin (macOS) support
 - [ ] Linux support
 
