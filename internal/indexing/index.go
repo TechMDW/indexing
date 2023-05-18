@@ -450,7 +450,14 @@ func (i *Index) FindNewFiles(path string) {
 				return
 			}
 
-			if checksum(filePath, currFile.Hash.MD5) {
+			// TODO: Add back the checksum, maybe?
+			// For now we just check the mod time and size
+			info, err := file.Info()
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			if currFile.ModTime == info.ModTime() && currFile.Size == info.Size() {
 				return
 			}
 

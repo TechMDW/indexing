@@ -1,9 +1,6 @@
 package indexing
 
 import (
-	"crypto/md5"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -55,27 +52,6 @@ type Permissions struct {
 	Group      string      `json:"group"`
 	Other      string      `json:"other"`
 	Permission os.FileMode `json:"permission"`
-}
-
-func checksum(filePath string, hash string) bool {
-	file, err := os.Open(filePath)
-
-	if err != nil {
-		fmt.Println(err)
-		return false
-	}
-
-	defer file.Close()
-
-	hasher := md5.New()
-
-	_, err = io.Copy(hasher, file)
-	if err != nil {
-		fmt.Println(err)
-		return false
-	}
-
-	return fmt.Sprintf("%x", hasher.Sum(nil)) == hash
 }
 
 func getTechMDWDir() (string, error) {
