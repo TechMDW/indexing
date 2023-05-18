@@ -103,8 +103,6 @@ func IndexFileWithoutPermissions(path string, info fs.FileInfo) File {
 		fullPath = fmt.Sprintf("%s/%s", path, info.Name())
 	}
 
-	fmt.Println("Indexing without permissions:", fullPath)
-
 	attr, _ := attributes.GetFileAttributes(path)
 
 	file := File{
@@ -187,18 +185,18 @@ func GetIndexInstance() (*Index, error) {
 					idx.WindowsDrivesLock.Lock()
 					*idx.WindowsDrives = append(*idx.WindowsDrives, drivePath)
 					idx.WindowsDrivesLock.Unlock()
-					// Find new files on the drive
-					go func(drivePath string) {
-						idx.FindNewFiles(drivePath)
-					}(drivePath)
 				}
 			}
 		case "linux":
+			ErrIdx = errors.New("unsupported operating system")
+			return
 			rootPath := "/"
 			go func() {
 				idx.FindNewFiles(rootPath)
 			}()
 		case "darwin":
+			ErrIdx = errors.New("unsupported operating system")
+			return
 			rootPath := "/"
 			go func() {
 				idx.FindNewFiles(rootPath)
@@ -257,6 +255,7 @@ func (i *Index) handler() {
 		i.CheckForRemovedFiles()
 		time.AfterFunc(15*time.Second, removedFilesFunc)
 	}
+	go newFilesFunc()
 
 	var checkForNewDrives func()
 	checkForNewDrives = func() {
@@ -282,18 +281,14 @@ func (i *Index) handler() {
 				}
 			}
 		}
-
 		time.AfterFunc(10*time.Second, checkForNewDrives)
 	}
 
-	delayNewFiles := time.NewTimer(1 * time.Minute)
 	delayRemovedFiles := time.NewTimer(30 * time.Second)
 	delayCheckForNewDrives := time.NewTimer(30 * time.Second)
 
 	for {
 		select {
-		case <-delayNewFiles.C:
-			go newFilesFunc()
 		case <-delayRemovedFiles.C:
 			go removedFilesFunc()
 		case <-delayCheckForNewDrives.C:
@@ -338,6 +333,7 @@ func (i *Index) Search(q string) []File {
 }
 
 func (i *Index) FindNewFiles(path string) {
+	// TODO: Not sure this is the best way
 	// Check if this path is already being processed
 	i.FindNewFilesMapLock.Lock()
 	if _, ok := (*i.FindNewFilesMap)[path]; ok {
@@ -359,8 +355,10 @@ func (i *Index) FindNewFiles(path string) {
 	files, err := os.ReadDir(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			log.Println(err)
 			return
 		}
+
 		stats, err := os.Stat(path)
 		if err != nil {
 			log.Println(err)
@@ -372,7 +370,6 @@ func (i *Index) FindNewFiles(path string) {
 		err = i.StoreIndex(path, file)
 
 		if err != nil {
-			log.Println("StoreIndexErr:", err)
 			return
 		}
 
@@ -391,7 +388,19 @@ func (i *Index) FindNewFiles(path string) {
 			filePath := fmt.Sprintf("%s/%s", path, file.Name())
 
 			if file.IsDir() {
-				i.FindNewFiles(filePath)
+				f, err := IndexFile(path, file)
+
+				if err != nil {
+					return
+				}
+
+				err = i.StoreIndex(filePath, *f)
+
+				if err != nil {
+					return
+				}
+
+				go i.FindNewFiles(filePath)
 				return
 			}
 
@@ -417,6 +426,10 @@ func (i *Index) FindNewFiles(path string) {
 				return
 			}
 
+			if currFile.Error != "" {
+				return
+			}
+
 			if checksum(filePath, currFile.Hash.MD5) {
 				return
 			}
@@ -432,6 +445,7 @@ func (i *Index) FindNewFiles(path string) {
 				log.Println(err)
 				return
 			}
+
 		}(file)
 	}
 

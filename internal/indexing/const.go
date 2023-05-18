@@ -13,7 +13,7 @@ const (
 )
 
 const (
-	MaxGoRoutines = 60
+	MaxGoRoutines = 5
 
 	MaxResults = 500
 
