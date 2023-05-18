@@ -121,6 +121,19 @@ func IndexFileWithoutPermissions(path string, info fs.FileInfo) File {
 	return file
 }
 
+func IndexFileWithoutInfo(path string) File {
+	attr, _ := attributes.GetFileAttributes(path)
+
+	fileInfo := File{
+		Path:              path,
+		FullPath:          path,
+		WindowsAttributes: attr,
+		Permissions:       Permissions{},
+	}
+
+	return fileInfo
+}
+
 // DEPRECATED
 func IndexDirectory(path string, index *Index) error {
 	files, err := os.ReadDir(path)
@@ -361,7 +374,14 @@ func (i *Index) FindNewFiles(path string) {
 
 		stats, err := os.Stat(path)
 		if err != nil {
-			log.Println(err)
+			indexedFile := IndexFileWithoutInfo(path)
+
+			err = i.StoreIndex(path, indexedFile)
+
+			if err != nil {
+				log.Println(err)
+				return
+			}
 			return
 		}
 
