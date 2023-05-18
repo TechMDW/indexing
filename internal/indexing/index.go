@@ -205,17 +205,17 @@ func GetIndexInstance() (*Index, error) {
 		case "linux":
 			ErrIdx = errors.New("unsupported operating system")
 			return
-			rootPath := "/"
-			go func() {
-				idx.FindNewFiles(rootPath)
-			}()
+			// rootPath := "/"
+			// go func() {
+			// 	idx.FindNewFiles(rootPath)
+			// }()
 		case "darwin":
 			ErrIdx = errors.New("unsupported operating system")
 			return
-			rootPath := "/"
-			go func() {
-				idx.FindNewFiles(rootPath)
-			}()
+			// rootPath := "/"
+			// go func() {
+			// 	idx.FindNewFiles(rootPath)
+			// }()
 		default:
 			ErrIdx = errors.New("unsupported operating system")
 			return

@@ -37,6 +37,8 @@ note this is subject to change**
 - [x] Index all drives/files
 - [x] Better error handling on access denied
 - [ ] Improve search algorithm
+- [ ] Filesystem imporvements
+- [ ] Better filter for not indexing certain files
 - [ ] USB version for indexing single drive
 - [ ] Load config file
 - [ ] Darwin (macOS) support
