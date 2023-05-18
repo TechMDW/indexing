@@ -2,6 +2,7 @@ package graceful
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -38,9 +39,10 @@ func (gs *GracefulShutdown) init() {
 			// Block until a signal is received.
 			sig := <-sigChan
 
+			log.Println("Graceful shutdown signal received.")
 			// Block until all tasks are done.
 			gs.Wait()
-
+			log.Println("Graceful shutdown tasks complete.")
 			// Exit with the signal status.
 			os.Exit(int(sig.(syscall.Signal)))
 		}()

@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/TechMDW/indexing/internal/attributes"
@@ -230,7 +232,7 @@ func GetIndexInstance() (*Index, error) {
 func (i *Index) handler() {
 	var autoStoreFunc func()
 	autoStoreFunc = func() {
-		if i.newFilesSinceStore != 0 {
+		if atomic.LoadInt32(&i.newFilesSinceStore) != 0 {
 			i.StoreFileIndex()
 		}
 		time.AfterFunc(1*time.Minute, autoStoreFunc)
@@ -239,9 +241,11 @@ func (i *Index) handler() {
 
 	var storeFunc func()
 	storeFunc = func() {
-		if i.newFilesSinceStore >= 50 {
+		var newFilesSinceStore int32
+		atomic.StoreInt32(&i.newFilesSinceStore, newFilesSinceStore)
+		if newFilesSinceStore >= 50 {
 			i.StoreFileIndex()
-		} else if time.Since(i.lastStore) >= 1*time.Minute && i.newFilesSinceStore != 0 {
+		} else if time.Since(i.getLastStore()) >= 1*time.Minute && newFilesSinceStore != 0 {
 			i.StoreFileIndex()
 		}
 		time.AfterFunc(5*time.Second, storeFunc)
@@ -346,6 +350,10 @@ func (i *Index) Search(q string) []File {
 }
 
 func (i *Index) FindNewFiles(path string) {
+	// TODO: Issues with onedrive
+	if strings.Contains(path, "OneDrive") {
+		return
+	}
 	// TODO: Not sure this is the best way
 	// Check if this path is already being processed
 	i.FindNewFilesMapLock.Lock()
@@ -511,7 +519,7 @@ func (i *Index) StoreIndex(fullPath string, file File) error {
 	(*i.FilesMap)[fullPath] = file
 	i.FilesMapLock.Unlock()
 
-	i.newFilesSinceStore++
+	atomic.AddInt32(&i.newFilesSinceStore, 1)
 
 	return nil
 }
@@ -578,13 +586,28 @@ func (i *Index) LoadFileIndex() error {
 	return nil
 }
 
+func (i *Index) updateLastStore() {
+	atomic.StoreInt64(&i.lastStore, time.Now().Unix())
+	atomic.StoreInt32(&i.newFilesSinceStore, 0)
+}
+
+func (i *Index) getLastStore() time.Time {
+	return time.Unix(atomic.LoadInt64(&i.lastStore), 0)
+}
+
+// Create a copy of the FilesMap and store it to disk
 func (i *Index) StoreFileIndex() error {
 	g := graceful.Shutdown()
 	g.AddTask()
 	defer g.DoneTask()
 
 	i.FilesMapLock.RLock()
-	defer i.FilesMapLock.RUnlock()
+	// Make a copy of the FilesMap.
+	copiedFilesMap := make(map[string]File, len(*i.FilesMap))
+	for key, value := range *i.FilesMap {
+		copiedFilesMap[key] = value
+	}
+	i.FilesMapLock.RUnlock()
 
 	path, err := getTechMDWDir()
 
@@ -612,7 +635,7 @@ func (i *Index) StoreFileIndex() error {
 	lz4Writer := lz4.NewWriter(file)
 
 	encoder := json.NewEncoder(lz4Writer)
-	if err := encoder.Encode(i.FilesMap); err != nil {
+	if err := encoder.Encode(copiedFilesMap); err != nil {
 		return err
 	}
 
@@ -620,8 +643,7 @@ func (i *Index) StoreFileIndex() error {
 		return err
 	}
 
-	i.lastStore = time.Now()
-	i.newFilesSinceStore = 0
+	i.updateLastStore()
 
 	return nil
 }

@@ -19,8 +19,8 @@ type Index struct {
 	WindowsDrives       *[]string            `json:"windowsDrivesArray"`
 	FindNewFilesMap     *map[string]struct{} `json:"-"`
 	FindNewFilesMapLock sync.RWMutex         `json:"-"`
-	newFilesSinceStore  int
-	lastStore           time.Time
+	newFilesSinceStore  int32
+	lastStore           int64
 }
 
 type File struct {
