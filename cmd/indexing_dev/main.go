@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"github.com/TechMDW/indexing/internal/indexing"
 
@@ -21,7 +23,7 @@ func main() {
 	// Start astilectron
 	a.Start()
 
-	startWindow(a)
+	go startWindow(a)
 
 	_, err := indexing.GetIndexInstance()
 
@@ -61,7 +63,10 @@ func listenForInput(w *astilectron.Window) {
 		var s string
 		m.Unmarshal(&s)
 
-		files := idx.Search(s)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		files := idx.Search(ctx, s)
 
 		w.SendMessage(files)
 		return nil

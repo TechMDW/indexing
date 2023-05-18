@@ -15,7 +15,7 @@ const (
 const (
 	MaxGoRoutines = 5
 
-	MaxResults = 500
+	MaxResults = 30
 
 	WIN_PossibleDriveLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 )

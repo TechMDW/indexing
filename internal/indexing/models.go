@@ -11,16 +11,12 @@ import (
 )
 
 type Index struct {
-	FilesMapLock        sync.RWMutex         `json:"-"`
-	FilesMap            *map[string]File     `json:"files"`
-	FilesArrayLock      sync.RWMutex         `json:"-"`
-	FilesArray          *[]File              `json:"filesArray"`
-	WindowsDrivesLock   sync.RWMutex         `json:"-"`
-	WindowsDrives       *[]string            `json:"windowsDrivesArray"`
-	FindNewFilesMap     *map[string]struct{} `json:"-"`
-	FindNewFilesMapLock sync.RWMutex         `json:"-"`
-	newFilesSinceStore  int32
-	lastStore           int64
+	FilesMap           sync.Map     `json:"files"`
+	WindowsDrivesLock  sync.RWMutex `json:"-"`
+	WindowsDrives      *[]string    `json:"windowsDrivesArray"`
+	FindNewFilesMap    sync.Map     `json:"-"`
+	newFilesSinceStore int32
+	lastStore          int64
 }
 
 type File struct {
@@ -39,12 +35,12 @@ type File struct {
 	Hash                  hash.Hash                    `json:"hash"`
 	Error                 string                       `json:"error,omitempty"`
 	WindowsAttributes     attributes.WindowsAttributes `json:"windowsAttributes,omitempty"`
-	internal_metadata     internal_metadata
+	Internal_metadata     internal_metadata
 }
 
 type internal_metadata struct {
-	score      int
-	score_data interface{}
+	Score      int
+	Score_data interface{}
 }
 
 type Permissions struct {

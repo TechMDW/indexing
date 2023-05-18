@@ -1,6 +1,7 @@
 package indexing
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -173,12 +175,10 @@ func IndexDirectory(path string, index *Index) error {
 
 func GetIndexInstance() (*Index, error) {
 	once.Do(func() {
-		m := make(map[string]File)
-
 		idx = &Index{
-			FilesMap:        &m,
+			FilesMap:        sync.Map{},
 			WindowsDrives:   &[]string{},
-			FindNewFilesMap: &map[string]struct{}{},
+			FindNewFilesMap: sync.Map{},
 		}
 
 		// Load index from file
@@ -254,25 +254,39 @@ func (i *Index) handler() {
 
 	var newFilesFunc func()
 	newFilesFunc = func() {
-		if runtime.GOOS == "windows" {
+		oss := runtime.GOOS
+		switch oss {
+		case "windows":
+			sem := make(chan struct{}, 2)
 			for _, drive := range *idx.WindowsDrives {
-				idx.FindNewFiles(drive)
+				sem <- struct{}{}
+				go func(drive string) {
+					defer func() { <-sem }()
+					idx.FindNewFiles(drive)
+				}(drive)
 			}
-		} else if runtime.GOOS == "linux" {
+
+			for i := 0; i < cap(sem); i++ {
+				sem <- struct{}{}
+			}
+		case "linux":
 			idx.FindNewFiles("/")
-		} else if runtime.GOOS == "darwin" {
+		case "darwin":
 			idx.FindNewFiles("/")
+		default:
+			log.Println("Unsupported operating system")
+			return
 		}
 
 		time.AfterFunc(30*time.Second, newFilesFunc)
 	}
+	go newFilesFunc()
 
 	var removedFilesFunc func()
 	removedFilesFunc = func() {
 		i.CheckForRemovedFiles()
-		time.AfterFunc(15*time.Second, removedFilesFunc)
+		time.AfterFunc(2*time.Minute, removedFilesFunc)
 	}
-	go newFilesFunc()
 
 	var checkForNewDrives func()
 	checkForNewDrives = func() {
@@ -314,38 +328,88 @@ func (i *Index) handler() {
 	}
 }
 
-func (i *Index) Search(q string) []File {
-	var results []File
-
-	i.FilesMapLock.RLock()
-	defer i.FilesMapLock.RUnlock()
+func (i *Index) Search(ctx context.Context, q string) []File {
 	startTime := time.Now()
-	for _, file := range *i.FilesMap {
-		var scoreTotal int
-		var score_data interface{}
+	const numWorkers = 30
+	results := make([]File, 0, MaxResults)
 
-		if file.IsDir {
-			scoreTotal, score_data = ScoreDir(file, q)
-		} else {
-			scoreTotal, score_data = ScoreFile(file, q)
+	pq := NewPriorityQueue(MaxResults)
+
+	filesCh := make(chan File, numWorkers)
+	resCh := make(chan File, numWorkers)
+
+	var wg sync.WaitGroup
+	for j := 0; j < numWorkers; j++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for file := range filesCh {
+				var scoreTotal int
+				var scoreData interface{}
+
+				if file.IsDir {
+					scoreTotal, scoreData = ScoreDir(file, q)
+				} else {
+					scoreTotal, scoreData = ScoreFile(file, q)
+				}
+
+				if scoreTotal > 0 {
+					file.Internal_metadata.Score = scoreTotal
+					file.Internal_metadata.Score_data = scoreData
+					select {
+					case resCh <- file:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		i.FilesMap.Range(func(key, value interface{}) bool {
+			file := value.(File)
+
+			select {
+			case filesCh <- file:
+			case <-ctx.Done():
+				return false
+			}
+
+			return true
+		})
+		close(filesCh)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(resCh)
+	}()
+
+	for file := range resCh {
+		item := &Item{
+			value:    file,
+			priority: file.Internal_metadata.Score,
 		}
 
-		if scoreTotal > 0 {
-			file.internal_metadata.score = scoreTotal
-			file.internal_metadata.score_data = score_data
-			results = append(results, file)
+		if pq.Len() < MaxResults {
+			pq.Push(item)
+		} else if top := (*pq)[0]; file.Internal_metadata.Score > top.priority {
+			pq.Pop()
+			pq.Push(item)
 		}
 	}
 
-	log.Printf("Search took %s", time.Since(startTime))
+	for pq.Len() > 0 {
+		item := pq.Pop().(*Item)
+		results = append(results, item.value)
+	}
+
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].internal_metadata.score > results[j].internal_metadata.score
+		return results[i].Internal_metadata.Score > results[j].Internal_metadata.Score
 	})
 
-	if len(results) > MaxResults {
-		return results[:MaxResults]
-	}
-
+	log.Printf("Search took %s", time.Since(startTime))
 	return results
 }
 
@@ -354,24 +418,25 @@ func (i *Index) FindNewFiles(path string) {
 	if strings.Contains(path, "OneDrive") {
 		return
 	}
+	// TODO: Check for a better way to do this
+	// Ignore temp folders to avoid indexing temp files. This will speed things up
+	tempDirRegex := regexp.MustCompile(`(?i)([/\\](temp|tmp|\.tmp)[/\\]|^temp[/\\]|^tmp[/\\]|^\.tmp[/\\])`)
+	if tempDirRegex.MatchString(path) {
+		return
+	}
 	// TODO: Not sure this is the best way
 	// Check if this path is already being processed
-	i.FindNewFilesMapLock.Lock()
-	if _, ok := (*i.FindNewFilesMap)[path]; ok {
-		i.FindNewFilesMapLock.Unlock()
+	if _, ok := i.FindNewFilesMap.Load(path); ok {
 		return
 	}
 
 	// Mark this path as being processed
-	(*i.FindNewFilesMap)[path] = struct{}{}
-	i.FindNewFilesMapLock.Unlock()
+	i.FindNewFilesMap.Store(path, struct{}{})
 
-	defer func() {
+	defer func(path string) {
 		// Mark this path as no longer being processed
-		i.FindNewFilesMapLock.Lock()
-		delete(*i.FindNewFilesMap, path)
-		i.FindNewFilesMapLock.Unlock()
-	}()
+		i.FindNewFilesMap.Delete(path)
+	}(path)
 
 	files, err := os.ReadDir(path)
 	if err != nil {
@@ -380,7 +445,7 @@ func (i *Index) FindNewFiles(path string) {
 			return
 		}
 
-		stats, err := os.Stat(path)
+		info, err := os.Stat(path)
 		if err != nil {
 			indexedFile := IndexFileWithoutInfo(path)
 
@@ -393,7 +458,7 @@ func (i *Index) FindNewFiles(path string) {
 			return
 		}
 
-		file := IndexFileWithoutPermissions(path, stats)
+		file := IndexFileWithoutPermissions(path, info)
 
 		err = i.StoreIndex(path, file)
 
@@ -488,23 +553,44 @@ func (i *Index) FindNewFiles(path string) {
 }
 
 func (i *Index) CheckForRemovedFiles() {
-	var toDelete []string
+	const workers = 4
+	pathsCh := make(chan string)
+	toDelete := make(chan string)
 
-	i.FilesMapLock.RLock()
-	for path, file := range *i.FilesMap {
-		if _, err := os.Stat(file.FullPath); os.IsNotExist(err) {
-			toDelete = append(toDelete, path)
-			log.Printf("File %s has been removed", file.FullPath)
-		}
+	go func() {
+		i.FilesMap.Range(func(key, value interface{}) bool {
+			file := value.(File)
+			pathsCh <- file.FullPath
+			return true
+		})
+		close(pathsCh)
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range pathsCh {
+				if _, err := os.Stat(path); os.IsNotExist(err) {
+					toDelete <- path
+				}
+			}
+		}()
 	}
-	i.FilesMapLock.RUnlock()
 
-	if len(toDelete) > 0 {
-		i.FilesMapLock.Lock()
-		for _, path := range toDelete {
-			delete(*i.FilesMap, path)
-		}
-		i.FilesMapLock.Unlock()
+	go func() {
+		wg.Wait()
+		close(toDelete)
+	}()
+
+	var toDeleteSlice []string
+	for path := range toDelete {
+		toDeleteSlice = append(toDeleteSlice, path)
+	}
+
+	for _, path := range toDeleteSlice {
+		i.RemoveIndex(path)
 	}
 }
 
@@ -515,28 +601,28 @@ func (i *Index) StoreIndex(fullPath string, file File) error {
 		return nil
 	}
 
-	i.FilesMapLock.Lock()
-	(*i.FilesMap)[fullPath] = file
-	i.FilesMapLock.Unlock()
+	i.FilesMap.Store(fullPath, file)
 
 	atomic.AddInt32(&i.newFilesSinceStore, 1)
 
 	return nil
 }
 
-func (i *Index) RemoveIndex(path string) error {
-	i.FilesMapLock.Lock()
-	delete(*i.FilesMap, path)
-	i.FilesMapLock.Unlock()
+func (i *Index) RemoveIndex(key string) error {
+	i.FilesMap.Delete(key)
 
 	return nil
 }
 
-func (i *Index) GetIndex(path string) (File, error) {
-	i.FilesMapLock.RLock()
-	defer i.FilesMapLock.RUnlock()
+func (i *Index) GetIndex(key string) (File, error) {
 
-	file, ok := (*i.FilesMap)[path]
+	val, ok := i.FilesMap.Load(key)
+
+	if !ok {
+		return File{}, ErrFileNotFound
+	}
+
+	file, ok := val.(File)
 	if !ok {
 		return File{}, ErrFileNotFound
 	}
@@ -544,25 +630,12 @@ func (i *Index) GetIndex(path string) (File, error) {
 	return file, nil
 }
 
-func (i *Index) ExistIndex(path string) bool {
-	i.FilesMapLock.RLock()
-	defer i.FilesMapLock.RUnlock()
-
-	_, ok := (*i.FilesMap)[path]
+func (i *Index) ExistIndex(key string) bool {
+	_, ok := i.FilesMap.Load(key)
 	return ok
 }
 
-func (i *Index) GetIndexMap() map[string]File {
-	i.FilesMapLock.RLock()
-	defer i.FilesMapLock.RUnlock()
-
-	return *i.FilesMap
-}
-
 func (i *Index) LoadFileIndex() error {
-	i.FilesMapLock.Lock()
-	defer i.FilesMapLock.Unlock()
-
 	path, err := getTechMDWDir()
 
 	if err != nil {
@@ -578,9 +651,14 @@ func (i *Index) LoadFileIndex() error {
 	lz4Reader := lz4.NewReader(file)
 
 	decoder := json.NewDecoder(lz4Reader)
-	err = decoder.Decode(&i.FilesMap)
+	var decodedMap map[string]File
+	err = decoder.Decode(&decodedMap)
 	if err != nil && err != io.EOF {
 		return err
+	}
+
+	for key, value := range decodedMap {
+		i.FilesMap.Store(key, value)
 	}
 
 	return nil
@@ -601,13 +679,12 @@ func (i *Index) StoreFileIndex() error {
 	g.AddTask()
 	defer g.DoneTask()
 
-	i.FilesMapLock.RLock()
 	// Make a copy of the FilesMap.
-	copiedFilesMap := make(map[string]File, len(*i.FilesMap))
-	for key, value := range *i.FilesMap {
-		copiedFilesMap[key] = value
-	}
-	i.FilesMapLock.RUnlock()
+	copiedFilesMap := make(map[string]File)
+	i.FilesMap.Range(func(key, value interface{}) bool {
+		copiedFilesMap[key.(string)] = value.(File)
+		return true
+	})
 
 	path, err := getTechMDWDir()
 
