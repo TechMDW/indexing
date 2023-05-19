@@ -86,7 +86,6 @@ func isBlacklisted(path string) bool {
 			return false
 		}
 		if match {
-			fmt.Println("Blacklisted: ", path)
 			return true
 		}
 	}

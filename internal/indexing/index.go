@@ -275,15 +275,6 @@ func GetIndexInstance() (*Index, error) {
 
 // TODO: Don't like this function...
 func (i *Index) handler() {
-	var autoStoreFunc func()
-	autoStoreFunc = func() {
-		if atomic.LoadInt32(&i.newFilesSinceStore) != 0 {
-			i.StoreFileIndex()
-		}
-		time.AfterFunc(1*time.Minute, autoStoreFunc)
-	}
-	go autoStoreFunc()
-
 	var storeFunc func()
 	storeFunc = func() {
 		var newFilesSinceStore int32
@@ -293,7 +284,7 @@ func (i *Index) handler() {
 		} else if time.Since(i.getLastStore()) >= 1*time.Minute && newFilesSinceStore != 0 {
 			i.StoreFileIndex()
 		}
-		time.AfterFunc(5*time.Second, storeFunc)
+		time.AfterFunc(10*time.Second, storeFunc)
 	}
 	go storeFunc()
 
@@ -301,7 +292,7 @@ func (i *Index) handler() {
 	newFilesFunc = func() {
 		if atomic.LoadInt64(&i.lastFileIndexLoad) == 0 {
 			fmt.Println("Loading index from file still in progress...")
-			time.AfterFunc(30*time.Second, newFilesFunc)
+			time.AfterFunc(15*time.Second, newFilesFunc)
 			return
 		}
 		oss := runtime.GOOS
@@ -335,7 +326,7 @@ func (i *Index) handler() {
 	var removedFilesFunc func()
 	removedFilesFunc = func() {
 		i.CheckForRemovedFiles()
-		time.AfterFunc(2*time.Minute, removedFilesFunc)
+		time.AfterFunc(5*time.Minute, removedFilesFunc)
 	}
 
 	var checkForNewDrives func()
@@ -471,7 +462,7 @@ func (i *Index) FindNewFiles(path string) {
 		return
 	}
 
-	if isBlacklisted := isBlacklisted(path); isBlacklisted {
+	if isBlacklisted(path) {
 		return
 	}
 
@@ -625,6 +616,10 @@ func (i *Index) CheckForRemovedFiles() {
 			defer wg.Done()
 			for path := range pathsCh {
 				if _, err := os.Stat(path); os.IsNotExist(err) {
+					toDelete <- path
+				}
+
+				if isBlacklisted(path) {
 					toDelete <- path
 				}
 			}
