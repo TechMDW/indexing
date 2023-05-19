@@ -277,8 +277,7 @@ func GetIndexInstance() (*Index, error) {
 func (i *Index) handler() {
 	var storeFunc func()
 	storeFunc = func() {
-		var newFilesSinceStore int32
-		atomic.StoreInt32(&i.newFilesSinceStore, newFilesSinceStore)
+		newFilesSinceStore := atomic.LoadInt32(&i.newFilesSinceStore)
 		if newFilesSinceStore >= 50 {
 			i.StoreFileIndex()
 		} else if time.Since(i.getLastStore()) >= 1*time.Minute && newFilesSinceStore != 0 {
