@@ -19,3 +19,20 @@ const (
 
 	WIN_PossibleDriveLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 )
+
+// Default blacklist
+var blacklist = []string{
+	`C:\\Windows.*`,
+	`C:\\Program Files.*`,         // TODO: Maybe
+	`C:\\Program Files \(x86\).*`, // TODO: Maybe
+	`C:\\Recovery.*`,
+	`C:\\System Volume Information.*`,
+	`.*pagefile\.sys`,
+	`.*hiberfil\.sys`,
+	`.*swapfile\.sys`,
+	// `C:\\Users\\.*\\AppData.*`, // TODO: Maybe
+	`C:\\Windows\\Temp.*`,
+	`C:\\Users\\.*\\AppData\\Local\\Temp.*`,
+	`.*\\Temp.*`,
+	`.*\\temp.*`,
+}

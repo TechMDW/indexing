@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"runtime"
 	"time"
 
 	"github.com/TechMDW/indexing/internal/indexing"
@@ -30,6 +32,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	go func() {
+		for {
+			PrintMemUsage()
+			time.Sleep(5 * time.Second)
+		}
+	}()
 
 	a.Wait()
 }
@@ -71,4 +80,29 @@ func listenForInput(w *astilectron.Window) {
 		w.SendMessage(files)
 		return nil
 	})
+}
+
+func PrintMemUsage() {
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	fmt.Println("------Memory Usage------")
+	fmt.Printf("Alloc = %v\n", ByteSize(mem.Alloc))
+	fmt.Printf("TotalAlloc = %v\n", ByteSize(mem.TotalAlloc))
+	fmt.Printf("Sys = %v\n", ByteSize(mem.Sys))
+	fmt.Printf("NumGC = %v\n", mem.NumGC)
+	fmt.Println("------------------------")
+}
+
+func ByteSize(bytes uint64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB",
+		float64(bytes)/float64(div), "KMGTPE"[exp])
 }

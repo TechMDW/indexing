@@ -1,8 +1,10 @@
 package indexing
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
@@ -25,6 +27,7 @@ type File struct {
 	Extension             string                       `json:"ext"`
 	Path                  string                       `json:"path"`
 	FullPath              string                       `json:"fullPath"`
+	PathInfo              PathInfo                     `json:"pathInfo"`
 	Size                  int64                        `json:"size"`
 	IsHidden              bool                         `json:"isHidden"`
 	IsDir                 bool                         `json:"isDir"`
@@ -51,6 +54,18 @@ type Permissions struct {
 	Permission os.FileMode `json:"permission"`
 }
 
+type PathInfo struct {
+	Abs          string `json:"abs"`
+	Base         string `json:"base"`
+	Clean        string `json:"clean"`
+	Dir          string `json:"dir"`
+	Ext          string `json:"ext"`
+	EvalSymlinks string `json:"evalSymlinks"`
+	IsAbs        bool   `json:"isAbs"`
+	VolumeName   string `json:"volumeName"`
+	Separator    string `json:"separator"`
+}
+
 func getTechMDWDir() (string, error) {
 	path, err := os.UserConfigDir()
 
@@ -61,4 +76,19 @@ func getTechMDWDir() (string, error) {
 	goDownHistoryPath := filepath.Join(path, "TechMDW", "indexing", IndexFileName)
 
 	return goDownHistoryPath, nil
+}
+
+func isBlacklisted(path string) bool {
+	for _, b := range blacklist {
+		match, err := regexp.MatchString(b, filepath.Clean(path))
+		if err != nil {
+			fmt.Printf("Invalid regex pattern: %v\n", err)
+			return false
+		}
+		if match {
+			fmt.Println("Blacklisted: ", path)
+			return true
+		}
+	}
+	return false
 }

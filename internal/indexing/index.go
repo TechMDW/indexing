@@ -1,6 +1,7 @@
 package indexing
 
 import (
+	"container/heap"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -42,6 +42,7 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 			Name:                  file.Name(),
 			Extension:             filepath.Ext(file.Name()),
 			Path:                  path,
+			PathInfo:              *pathInfo(path),
 			FullPath:              fmt.Sprintf("%s/%s", path, file.Name()),
 			IsHidden:              file.Name()[0] == '.',
 			IsDir:                 file.IsDir(),
@@ -80,6 +81,7 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 		Extension:         filepath.Ext(file.Name()),
 		Path:              path,
 		FullPath:          fmt.Sprintf("%s/%s", path, file.Name()),
+		PathInfo:          *pathInfo(fmt.Sprintf("%s/%s", path, file.Name())),
 		Size:              info.Size(),
 		IsHidden:          file.Name()[0] == '.',
 		IsDir:             file.IsDir(),
@@ -98,9 +100,51 @@ func IndexFile(path string, file fs.DirEntry) (*File, error) {
 	return &fileInfo, nil
 }
 
+func pathInfo(path string) *PathInfo {
+	info := &PathInfo{}
+
+	var err error
+
+	// Abs
+	info.Abs, err = filepath.Abs(path)
+	if err != nil {
+		info.Abs = ""
+	}
+
+	// Base
+	info.Base = filepath.Base(path)
+
+	// Clean
+	info.Clean = filepath.Clean(path)
+
+	// Dir
+	info.Dir = filepath.Dir(path)
+
+	// Ext
+	info.Ext = filepath.Ext(path)
+
+	// EvalSymlinks
+	info.EvalSymlinks, err = filepath.EvalSymlinks(path)
+	if err != nil && !os.IsNotExist(err) {
+		info.EvalSymlinks = ""
+	}
+
+	// IsAbs
+	info.IsAbs = filepath.IsAbs(path)
+
+	// VolumeName
+	info.VolumeName = filepath.VolumeName(path)
+
+	// Separator
+	info.Separator = string(filepath.Separator)
+
+	return info
+}
+
 func IndexFileWithoutPermissions(path string, info fs.FileInfo) File {
 	var fullPath string
 
+	// TODO: Look into this
 	if info.IsDir() {
 		fullPath = path
 	} else {
@@ -114,6 +158,7 @@ func IndexFileWithoutPermissions(path string, info fs.FileInfo) File {
 		Extension:         filepath.Ext(info.Name()),
 		Path:              path,
 		FullPath:          fullPath,
+		PathInfo:          *pathInfo(fullPath),
 		Size:              info.Size(),
 		IsHidden:          info.Name()[0] == '.',
 		IsDir:             info.IsDir(),
@@ -257,6 +302,7 @@ func (i *Index) handler() {
 		if atomic.LoadInt64(&i.lastFileIndexLoad) == 0 {
 			fmt.Println("Loading index from file still in progress...")
 			time.AfterFunc(30*time.Second, newFilesFunc)
+			return
 		}
 		oss := runtime.GOOS
 		switch oss {
@@ -332,9 +378,12 @@ func (i *Index) handler() {
 	}
 }
 
+// Search searches the index based on the query string
+//
+// It will score the indexes based on the query string and return the top 30 results
 func (i *Index) Search(ctx context.Context, q string) []File {
 	startTime := time.Now()
-	const numWorkers = 30
+	const numWorkers = 100
 	results := make([]File, 0, MaxResults)
 
 	pq := NewPriorityQueue(MaxResults)
@@ -392,21 +441,19 @@ func (i *Index) Search(ctx context.Context, q string) []File {
 
 	for file := range resCh {
 		item := &Item{
-			value:    file,
-			priority: file.Internal_metadata.Score,
+			Value:    file,
+			Priority: file.Internal_metadata.Score,
 		}
 
-		if pq.Len() < MaxResults {
-			pq.Push(item)
-		} else if top := (*pq)[0]; file.Internal_metadata.Score > top.priority {
-			pq.Pop()
-			pq.Push(item)
+		heap.Push(pq, item)
+		if pq.Len() > MaxResults {
+			heap.Pop(pq)
 		}
 	}
 
 	for pq.Len() > 0 {
 		item := pq.Pop().(*Item)
-		results = append(results, item.value)
+		results = append(results, item.Value.(File))
 	}
 
 	sort.Slice(results, func(i, j int) bool {
@@ -417,17 +464,17 @@ func (i *Index) Search(ctx context.Context, q string) []File {
 	return results
 }
 
+// FindNewFiles finds new files in a directory and stores them in the FilesMap
 func (i *Index) FindNewFiles(path string) {
 	// TODO: Issues with onedrive
 	if strings.Contains(path, "OneDrive") {
 		return
 	}
-	// TODO: Check for a better way to do this
-	// Ignore temp folders to avoid indexing temp files. This will speed things up
-	tempDirRegex := regexp.MustCompile(`(?i)([/\\](temp|tmp|\.tmp)[/\\]|^temp[/\\]|^tmp[/\\]|^\.tmp[/\\])`)
-	if tempDirRegex.MatchString(path) {
+
+	if isBlacklisted := isBlacklisted(path); isBlacklisted {
 		return
 	}
+
 	// TODO: Not sure this is the best way
 	// Check if this path is already being processed
 	if _, ok := i.FindNewFilesMap.Load(path); ok {
@@ -556,6 +603,7 @@ func (i *Index) FindNewFiles(path string) {
 	wg.Wait()
 }
 
+// CheckForRemovedFiles checks if any files have been removed from the index
 func (i *Index) CheckForRemovedFiles() {
 	const workers = 4
 	pathsCh := make(chan string)
@@ -598,6 +646,7 @@ func (i *Index) CheckForRemovedFiles() {
 	}
 }
 
+// StoreIndex stores a File in the FilesMap
 func (i *Index) StoreIndex(fullPath string, file File) error {
 	ok := i.ExistIndex(fullPath)
 
@@ -612,12 +661,14 @@ func (i *Index) StoreIndex(fullPath string, file File) error {
 	return nil
 }
 
+// RemoveIndex removes a File from the FilesMap
 func (i *Index) RemoveIndex(key string) error {
 	i.FilesMap.Delete(key)
 
 	return nil
 }
 
+// GetIndex returns a File from the FilesMap
 func (i *Index) GetIndex(key string) (File, error) {
 
 	val, ok := i.FilesMap.Load(key)
@@ -634,13 +685,17 @@ func (i *Index) GetIndex(key string) (File, error) {
 	return file, nil
 }
 
+// ExistIndex checks if a key exists in the FilesMap
 func (i *Index) ExistIndex(key string) bool {
 	_, ok := i.FilesMap.Load(key)
 	return ok
 }
 
 // LoadFileIndex reads the FilesMap from disk in NDJSON format.
+//
+// TODO: Make this function more robust. Currently it can take a long time to load the index from disk.
 func (i *Index) LoadFileIndex() error {
+	startTime := time.Now()
 	path, err := getTechMDWDir()
 
 	if err != nil {
@@ -649,6 +704,9 @@ func (i *Index) LoadFileIndex() error {
 
 	file, err := os.Open(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			atomic.StoreInt64(&i.lastFileIndexLoad, time.Now().Unix())
+		}
 		return err
 	}
 	defer file.Close()
@@ -675,14 +733,17 @@ func (i *Index) LoadFileIndex() error {
 
 	atomic.StoreInt64(&i.lastFileIndexLoad, time.Now().Unix())
 
+	log.Printf("Loaded index from file in %s", time.Since(startTime))
 	return nil
 }
 
+// Update the last time the index was stored to disk
 func (i *Index) updateLastStore() {
 	atomic.StoreInt64(&i.lastStore, time.Now().Unix())
 	atomic.StoreInt32(&i.newFilesSinceStore, 0)
 }
 
+// Get the last time the index was stored to disk
 func (i *Index) getLastStore() time.Time {
 	return time.Unix(atomic.LoadInt64(&i.lastStore), 0)
 }
