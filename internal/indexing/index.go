@@ -522,6 +522,11 @@ func (i *Index) FindNewFiles(path string) {
 
 			filePath := fmt.Sprintf("%s/%s", path, file.Name())
 
+			// Check if this file is already in the index
+			if i.ExistIndex(filePath) {
+				return
+			}
+
 			if file.IsDir() {
 				f, err := IndexFile(path, file)
 
@@ -643,12 +648,6 @@ func (i *Index) CheckForRemovedFiles() {
 
 // StoreIndex stores a File in the FilesMap
 func (i *Index) StoreIndex(fullPath string, file File) error {
-	ok := i.ExistIndex(fullPath)
-
-	if ok {
-		return nil
-	}
-
 	i.FilesMap.Store(fullPath, file)
 
 	atomic.AddInt32(&i.newFilesSinceStore, 1)
